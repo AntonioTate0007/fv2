@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: fortress-api
+    runtime: docker
+    rootDir: server
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: FORTRESS_API_TOKEN
+        generateValue: true   # auto-generated, copy this into local.properties
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_API_SECRET
+        sync: false
+      - key: ALPACA_PAPER
+        value: "true"         # safe default — flip to "false" only when ready
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true

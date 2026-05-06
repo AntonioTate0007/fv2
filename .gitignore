@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.keystore
+google-services.json
+
+# Build / IDE caches
+.kotlin/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+server/.env
+
+# Crash dumps
+hs_err_pid*.log

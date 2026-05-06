@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Fortress</string>
+
+    <!-- Biometric prompt -->
+    <string name="biometric_title">Authorize Trade Execution</string>
+    <string name="biometric_subtitle">The Fortress requires biometric confirmation</string>
+    <string name="biometric_negative">Cancel</string>
+
+    <!-- Notification channels -->
+    <string name="channel_profit_alerts">Profit Alerts</string>
+    <string name="channel_profit_alerts_desc">Notifies you when an open position hits the 50% profit target</string>
+    <string name="action_close_position">CLOSE POSITION</string>
+</resources>
