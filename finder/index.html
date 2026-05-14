@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pump-Finder</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --panel-2: #1a1f26;
+    --line: #232a33;
+    --text: #e7ecf2;
+    --muted: #7c8896;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --gold: #f5b800;
+    --hot: #ff5e3a;
+    --link: #5aa9ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { position: sticky; top: 0; z-index: 10; background: var(--bg);
+    border-bottom: 1px solid var(--line); padding: 14px 18px; display: flex;
+    align-items: center; gap: 14px; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.4px; }
+  header h1 .lit { color: var(--hot); }
+  header .pill { font-size: 11px; padding: 3px 8px; border-radius: 999px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+  header .pill.live { color: var(--green); border-color: rgba(46,204,113,.35); }
+  header .pill.mock { color: var(--gold); border-color: rgba(245,184,0,.35); }
+  header .spacer { flex: 1; }
+  header .ts { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  header button { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  header button:hover { background: #222831; }
+
+  main { padding: 16px; max-width: 1280px; margin: 0 auto; }
+  .why { color: var(--muted); font-size: 12px; margin: 0 0 14px 2px; max-width: 780px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted);
+    background: var(--panel-2); position: sticky; top: 56px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: rgba(255,255,255,0.025); }
+
+  .tk { font-weight: 700; letter-spacing: 0.4px; }
+  .name { color: var(--muted); font-size: 12px; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .num-right { text-align: right; }
+  .reason { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 999px;
+    background: rgba(245,184,0,.10); color: var(--gold); border: 1px solid rgba(245,184,0,.25);
+    margin: 2px 4px 2px 0; }
+
+  .score-cell { width: 84px; }
+  .score { display: inline-flex; align-items: center; justify-content: center;
+    min-width: 42px; height: 28px; padding: 0 8px; border-radius: 6px; font-weight: 700;
+    background: var(--panel-2); border: 1px solid var(--line); }
+  .score.s70 { color: var(--gold); border-color: rgba(245,184,0,.4); background: rgba(245,184,0,.08); }
+  .score.s85 { color: var(--hot);  border-color: rgba(255,94,58,.4); background: rgba(255,94,58,.1); }
+
+  .links a { color: var(--link); text-decoration: none; font-size: 12px; margin-right: 10px; }
+  .links a:hover { text-decoration: underline; }
+
+  .empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+  .loading { color: var(--muted); padding: 20px; }
+
+  @media (max-width: 720px) {
+    th.hide-sm, td.hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pump-<span class="lit">Finder</span></h1>
+  <span id="src" class="pill">—</span>
+  <span class="spacer"></span>
+  <span id="ts" class="ts">—</span>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <p class="why">Small-cap stocks already moving on heavy relative volume — the pattern that
+    later shows up in Facebook stock groups. Higher score = earlier in the runup pattern.
+    Not financial advice. Verify the catalyst (PR, FDA, filing) before you buy.</p>
+
+  <div id="status" class="loading">Loading…</div>
+  <table id="tbl" hidden>
+    <thead>
+      <tr>
+        <th class="score-cell">Score</th>
+        <th>Ticker</th>
+        <th class="num-right">Price</th>
+        <th class="num-right">Today</th>
+        <th class="num-right">RelVol</th>
+        <th class="num-right hide-sm">Volume</th>
+        <th class="num-right hide-sm">Float</th>
+        <th class="num-right hide-sm">Mkt Cap</th>
+        <th class="hide-sm">Signals</th>
+        <th>Look up</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+
+<script>
+const fmtNum = (n) => {
+  if (n == null) return "—";
+  if (n >= 1e9)  return (n / 1e9 ).toFixed(2) + "B";
+  if (n >= 1e6)  return (n / 1e6 ).toFixed(1) + "M";
+  if (n >= 1e3)  return (n / 1e3 ).toFixed(1) + "K";
+  return String(n);
+};
+const fmtTime = (epoch) => {
+  const d = new Date(epoch * 1000);
+  return d.toLocaleTimeString();
+};
+
+async function load() {
+  const status = document.getElementById("status");
+  const tbl = document.getElementById("tbl");
+  try {
+    const res = await fetch("/api/scan", { cache: "no-store" });
+    if (!res.ok) throw new Error("scan " + res.status);
+    const data = await res.json();
+
+    const src = document.getElementById("src");
+    src.textContent = data.source === "live" ? "LIVE" : "MOCK";
+    src.className = "pill " + (data.source === "live" ? "live" : "mock");
+    document.getElementById("ts").textContent =
+      "as of " + fmtTime(data.asOf) + " · " + data.count + " hit" + (data.count === 1 ? "" : "s");
+
+    const rows = document.getElementById("rows");
+    rows.innerHTML = "";
+    if (data.candidates.length === 0) {
+      status.hidden = false;
+      status.textContent = "No candidates match the filters right now. " +
+        "Markets may be closed, or nothing fits the pre-runup pattern.";
+      tbl.hidden = true;
+      return;
+    }
+    for (const c of data.candidates) {
+      const tr = document.createElement("tr");
+      const scoreClass = c.score >= 85 ? "s85" : c.score >= 70 ? "s70" : "";
+      const chgClass = c.changePct >= 0 ? "pos" : "neg";
+      const sign = c.changePct >= 0 ? "+" : "";
+      tr.innerHTML = `
+        <td><span class="score ${scoreClass}">${c.score}</span></td>
+        <td>
+          <div class="tk">${c.ticker}</div>
+          <div class="name">${c.name}</div>
+        </td>
+        <td class="num-right">$${c.price.toFixed(2)}</td>
+        <td class="num-right ${chgClass}">${sign}${c.changePct.toFixed(2)}%</td>
+        <td class="num-right">${c.relVol.toFixed(1)}×</td>
+        <td class="num-right hide-sm">${fmtNum(c.volume)}</td>
+        <td class="num-right hide-sm">${fmtNum(c.floatShares)}</td>
+        <td class="num-right hide-sm">${c.marketCap == null ? "—" : "$" + fmtNum(c.marketCap)}</td>
+        <td class="hide-sm">${c.reasons.map(r => `<span class="reason">${r}</span>`).join("")}</td>
+        <td class="links">
+          <a target="_blank" rel="noopener" href="${c.yahooUrl}">Yahoo</a>
+          <a target="_blank" rel="noopener" href="${c.stocktwitsUrl}">ST</a>
+          <a target="_blank" rel="noopener" href="${c.fbSearchUrl}">FB</a>
+        </td>
+      `;
+      rows.appendChild(tr);
+    }
+    status.hidden = true;
+    tbl.hidden = false;
+  } catch (e) {
+    status.hidden = false;
+    status.textContent = "Failed to load: " + e.message;
+    tbl.hidden = true;
+  }
+}
+
+document.getElementById("refresh").addEventListener("click", load);
+load();
+setInterval(load, 30_000);
+</script>
+</body>
+</html>
