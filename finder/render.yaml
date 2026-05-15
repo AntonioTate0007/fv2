@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: pump-finder
+    runtime: docker
+    rootDir: finder
+    plan: free
+    healthCheckPath: /healthz
+    # No env vars needed — public read-only screener. If you ever add auth,
+    # define FINDER_API_TOKEN here the same way fortress-api does it.

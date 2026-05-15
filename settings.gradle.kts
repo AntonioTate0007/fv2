@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Fortress"
 include(":app")
+include(":pumps")
