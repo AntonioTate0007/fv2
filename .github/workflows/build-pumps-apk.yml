@@ -18,6 +18,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel an older run on the same branch the moment a newer push lands,
+# and prevent the push + pull_request event pair from racing for the same
+# Gradle cache key.
+concurrency:
+  group: build-pumps-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -25,7 +32,7 @@ jobs:
   build:
     name: Build :pumps debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -37,23 +44,26 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-35
-            build-tools;35.0.0
-            platform-tools
+      - name: Set up Gradle (handles caching)
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      - name: Set up Android SDK
+        # Pinned to a known-stable release so floating-tag breakage on the
+        # main `v3` branch can't take the build down.
+        uses: android-actions/setup-android@v3.2.2
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle/libs.versions.toml') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
+          packages: ""
+
+      - name: Accept Android SDK licenses + install required packages
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+          echo "[sdk] installed packages:"
+          sdkmanager --list_installed | head -40 || true
 
       - name: Write pumps backend URL
         env:
@@ -71,7 +81,7 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "${GOOGLE_SERVICES_JSON}" ]; then
-            echo "${GOOGLE_SERVICES_JSON}" > pumps/google-services.json
+            printf '%s' "${GOOGLE_SERVICES_JSON}" > pumps/google-services.json
             echo "[pumps] google-services.json written (${#GOOGLE_SERVICES_JSON} bytes) — Firebase enabled"
           else
             echo "[pumps] no GOOGLE_SERVICES_JSON secret — building without Firebase (FCM disabled, WorkManager fallback still works)"
