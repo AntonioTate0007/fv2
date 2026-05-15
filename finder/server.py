@@ -36,6 +36,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 try:
@@ -52,6 +53,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 HERE = Path(__file__).parent
 INDEX_HTML = HERE / "index.html"
+STATIC_DIR = HERE / "static"
 
 # ── Filter knobs ───────────────────────────────────────────────────────────────
 
@@ -319,6 +321,12 @@ async def _cached_scan() -> ScanResponse:
 
 app = FastAPI(title="Pump-Finder", version="0.1.0")
 
+if STATIC_DIR.exists():
+    # Serve manifest, icons, and the service worker. Service worker MUST be
+    # served from /static/sw.js (its scope is set by URL location); the SW
+    # itself sets `scope: '/'` via the registration call in index.html.
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 @app.get("/healthz")
 def healthz():
@@ -337,7 +345,24 @@ def index():
     return JSONResponse({"error": "index.html missing"}, status_code=500)
 
 
+@app.get("/sw.js")
+def service_worker():
+    """Served from the root so its scope covers '/' (intercepts /api/scan).
+    A SW served from /static/ would be scope-limited to /static/.
+    """
+    sw_path = STATIC_DIR / "sw.js"
+    if not sw_path.exists():
+        return JSONResponse({"error": "sw.js missing"}, status_code=404)
+    return FileResponse(
+        sw_path,
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    # Bind 0.0.0.0 when PORT is set (Render / container), else loopback for dev.
+    host = "0.0.0.0" if os.getenv("PORT") else "127.0.0.1"
+    uvicorn.run(app, host=host, port=port)
