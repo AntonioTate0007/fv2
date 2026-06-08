@@ -8,9 +8,13 @@ Routes (all under /v1, all gated by Authorization: Bearer <FORTRESS_API_TOKEN>):
     POST /v1/armory/close                   → CloseResponse
     POST /v1/officer/ask                    → RiskOfficerResponse
     POST /v1/notifications/register         → {ok: true}
+    GET  /v1/agents/status                  → swarm state + last decision
+    POST /v1/agents/run                     → run a cycle → ConsolidatedDecision
+    GET  /v1/agents/{name}/report           → one sub-agent's latest report
 
 Public:
     GET  /                                  → service status
+    GET  /dashboard                         → agent-swarm web dashboard (HTML)
 
 Admin (gated by Authorization: Bearer <ADMIN_TOKEN>):
     POST /admin/test-alert                  → fires a profit-target FCM push
@@ -43,9 +47,11 @@ from datetime import date, timedelta
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Header, Query, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import alpaca as broker  # type: ignore   # sibling module, both under server/
+from agents import get_orchestrator  # type: ignore   # agents/ package under server/
 
 try:
     import google.generativeai as genai
@@ -138,6 +144,10 @@ class RiskOfficerResponse(BaseModel):
 
 class FcmTokenRequest(BaseModel):
     token: str
+
+
+class AgentRunRequest(BaseModel):
+    capital: int = 1000
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
@@ -382,6 +392,60 @@ def register_token(req: FcmTokenRequest):
     if req.token:
         FCM_TOKENS.add(req.token)
     return {"ok": True, "registered": len(FCM_TOKENS)}
+
+
+# ── Agent swarm ───────────────────────────────────────────────────────────────────
+#
+# The three sub-agents (Auto Hedge, Vibe Trading, Fincept) report back to the main
+# orchestrator. These routes drive a cycle and expose the consolidated decision.
+
+@app.get("/v1/agents/status", dependencies=[Depends(require_app_auth)])
+def agents_status():
+    """Current state of every agent + the last consolidated decision. Cheap; safe
+    to poll from the dashboard."""
+    orch = get_orchestrator()
+    return {
+        "account": broker.get_account(),  # None in mock mode
+        "mode": ("LIVE" if broker.is_configured() and broker.is_live()
+                 else "PAPER" if broker.is_configured() else "MOCK"),
+        **orch.status(),
+    }
+
+
+@app.post("/v1/agents/run", dependencies=[Depends(require_app_auth)])
+def agents_run(req: AgentRunRequest):
+    """Trigger one orchestration cycle: all three sub-agents analyze the same
+    market snapshot and report back; the orchestrator fuses them into a decision."""
+    decision = get_orchestrator().run_cycle(capital=req.capital)
+    return decision.model_dump()
+
+
+@app.get("/v1/agents/{name}/report", dependencies=[Depends(require_app_auth)])
+def agent_report(name: str):
+    """Latest report from a single sub-agent: auto_hedge | vibe_trading | fincept."""
+    orch = get_orchestrator()
+    mapping = {
+        "auto_hedge": orch.auto_hedge,
+        "vibe_trading": orch.vibe,
+        "fincept": orch.fincept,
+    }
+    agent = mapping.get(name)
+    if agent is None:
+        raise HTTPException(404, f"unknown agent '{name}' "
+                                 f"(expected one of {list(mapping)})")
+    if agent.last_report is None:
+        raise HTTPException(409, f"agent '{name}' has not run yet — POST /v1/agents/run first")
+    return agent.last_report.model_dump()
+
+
+# ── Dashboard (static single-page UI served by the API) ─────────────────────────
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard():
+    """Serve the swarm dashboard. The page itself prompts for the bearer token
+    (or works token-free in local mock mode) and polls the /v1/agents/* routes."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return FileResponse(os.path.join(here, "dashboard", "index.html"))
 
 
 # ── Admin / debug ───────────────────────────────────────────────────────────────

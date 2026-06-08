@@ -522,3 +522,85 @@ def scan_chains(capital: int) -> list[dict]:
         })
 
     return out
+
+
+# ── Account / quotes (read-only helpers used by the agent swarm) ─────────────────
+
+def get_account() -> Optional[dict]:
+    """Snapshot of the trading account, or None when the broker isn't configured.
+
+    Shape is deliberately flat and JSON-safe so the orchestrator and dashboard can
+    consume it directly without touching Alpaca SDK objects.
+    """
+    if not is_configured():
+        return None
+    try:
+        a = _trading_client().get_account()
+    except Exception as e:
+        log.warning("[alpaca] get_account failed: %s", e)
+        return None
+
+    def _f(name: str) -> float:
+        try:
+            return float(getattr(a, name, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "mode": "LIVE" if is_live() else "PAPER",
+        "equity": _f("equity"),
+        "lastEquity": _f("last_equity"),
+        "cash": _f("cash"),
+        "buyingPower": _f("buying_power"),
+        "portfolioValue": _f("portfolio_value"),
+        "longMarketValue": _f("long_market_value"),
+        "shortMarketValue": _f("short_market_value"),
+        "daytradeCount": int(getattr(a, "daytrade_count", 0) or 0),
+        "status": str(getattr(a, "status", "")),
+        "currency": str(getattr(a, "currency", "USD")),
+    }
+
+
+def get_stock_quotes(symbols: list[str]) -> dict[str, float]:
+    """Latest trade price per symbol. Empty dict on any failure / mock mode."""
+    if not is_configured() or not symbols:
+        return {}
+    try:
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestTradeRequest
+        sdc = StockHistoricalDataClient(api_key=_api_key(), secret_key=_api_secret())
+        resp = sdc.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=symbols)
+        )
+        return {sym: float(trade.price) for sym, trade in resp.items()}
+    except Exception as e:
+        log.warning("[alpaca] stock quote fetch failed: %s", e)
+        return {}
+
+
+def get_stock_bars(symbol: str, days: int = 30) -> list[float]:
+    """Daily closing prices for the last `days` sessions (oldest→newest).
+
+    Used by the Fincept analytics agent for technical indicators. Returns an empty
+    list in mock mode or on failure so callers can degrade to synthetic series.
+    """
+    if not is_configured():
+        return []
+    try:
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        sdc = StockHistoricalDataClient(api_key=_api_key(), secret_key=_api_secret())
+        start = datetime.now(timezone.utc) - timedelta(days=days * 2 + 5)
+        req = StockBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=TimeFrame.Day,
+            start=start,
+        )
+        bars = sdc.get_stock_bars(req)
+        data = bars.data.get(symbol, []) if hasattr(bars, "data") else []
+        closes = [float(b.close) for b in data]
+        return closes[-days:] if len(closes) > days else closes
+    except Exception as e:
+        log.warning("[alpaca] bars fetch %s failed: %s", symbol, e)
+        return []

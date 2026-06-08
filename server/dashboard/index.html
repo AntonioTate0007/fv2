@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Fortress · Agent Swarm</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#121822; --panel2:#0e141d; --line:#1f2a37;
+    --txt:#e6edf3; --dim:#8b98a5; --accent:#3fb950; --warn:#d29922;
+    --bad:#f85149; --info:#58a6ff; --hedge:#a371f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,monospace}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;letter-spacing:.5px}
+  header h1 .v{color:var(--dim);font-weight:400;font-size:12px}
+  .spacer{flex:1}
+  .pill{padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;
+    border:1px solid var(--line)}
+  .pill.MOCK{color:var(--dim)} .pill.PAPER{color:var(--info);border-color:#1f3a5f}
+  .pill.LIVE{color:var(--bad);border-color:#5f1f1f}
+  input,button,select{font:inherit;background:var(--panel2);color:var(--txt);
+    border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+  button{cursor:pointer;font-weight:600}
+  button.primary{background:#1f6f33;border-color:#2ea043}
+  button.primary:hover{background:#2ea043}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  main{max-width:1180px;margin:0 auto;padding:20px}
+  .acct{display:flex;gap:24px;flex-wrap:wrap;padding:14px 18px;margin-bottom:18px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .acct .kv{display:flex;flex-direction:column}
+  .acct .kv b{font-size:18px} .acct .kv span{color:var(--dim);font-size:11px;
+    text-transform:uppercase;letter-spacing:.5px}
+  .decision{background:linear-gradient(180deg,#141b26,#0e141d);
+    border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:20px}
+  .decision .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .posture{font-size:13px;font-weight:700;padding:4px 12px;border-radius:6px}
+  .posture.AGGRESSIVE{background:#10331a;color:var(--accent)}
+  .posture.NEUTRAL{background:#2a2410;color:var(--warn)}
+  .posture.DEFENSIVE{background:#331212;color:var(--bad)}
+  .gate{font-size:12px;color:var(--dim)}
+  .gate b.open{color:var(--accent)} .gate b.closed{color:var(--bad)}
+  .headline{margin:10px 0 4px;font-size:15px}
+  .actions{margin-top:14px;display:grid;gap:8px}
+  .action{display:grid;grid-template-columns:70px 64px 1fr auto;gap:12px;
+    align-items:center;padding:10px 12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px}
+  .tag{font-weight:700;font-size:11px;text-align:center;padding:3px 0;border-radius:5px}
+  .tag.OPEN{background:#10331a;color:var(--accent)}
+  .tag.HEDGE{background:#241036;color:var(--hedge)}
+  .tag.CLOSE{background:#33260f;color:var(--warn)}
+  .action .tk{font-weight:700} .action .rat{color:var(--dim);font-size:13px}
+  .conv{font-variant-numeric:tabular-nums;color:var(--info);font-weight:700}
+  .src{font-size:10px;color:var(--dim);text-transform:uppercase}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:16px;display:flex;flex-direction:column}
+  .card h3{margin:0 0 2px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.OK{background:var(--accent)} .dot.DEGRADED{background:var(--warn)}
+  .dot.ERROR{background:var(--bad)} .dot.IDLE{background:var(--dim)}
+  .card .sub{color:var(--dim);font-size:11px;margin-bottom:10px}
+  .card .summary{font-size:13px;min-height:38px}
+  .sig{font-size:12px;padding:7px 9px;margin-top:7px;background:var(--panel2);
+    border-left:3px solid var(--line);border-radius:4px}
+  .sig.BULLISH{border-color:var(--accent)} .sig.BEARISH{border-color:var(--bad)}
+  .sig.HEDGE{border-color:var(--hedge)} .sig.NEUTRAL{border-color:var(--dim)}
+  .sig .h{display:flex;justify-content:space-between;font-weight:600}
+  .sig .r{color:var(--dim);margin-top:2px}
+  .meta{margin-top:auto;padding-top:10px;font-size:10px;color:var(--dim);
+    display:flex;justify-content:space-between;border-top:1px solid var(--line)}
+  .hash{font-family:monospace}
+  .empty{color:var(--dim);font-style:italic;padding:6px 0}
+  .err{color:var(--bad);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⛬ FORTRESS <span class="v">Agent Swarm</span></h1>
+  <span id="mode" class="pill MOCK">MOCK</span>
+  <span class="spacer"></span>
+  <input id="token" type="password" placeholder="API bearer token (blank in mock)" size="22"/>
+  <input id="capital" type="number" value="1000" min="100" step="100" title="Capital per trade" style="width:90px"/>
+  <button id="auto" title="Toggle 30s auto-refresh">Auto ▶</button>
+  <button id="run" class="primary">Run Cycle</button>
+</header>
+
+<main>
+  <div id="acct" class="acct"><div class="empty">No account data yet — run a cycle.</div></div>
+
+  <div id="decision" class="decision">
+    <div class="top">
+      <span class="posture NEUTRAL" id="posture">—</span>
+      <span class="gate" id="gate"></span>
+      <span class="spacer"></span>
+      <span class="gate" id="cycleMeta"></span>
+    </div>
+    <div class="headline" id="headline">The main agent has not run a cycle yet. Press <b>Run Cycle</b>.</div>
+    <div class="actions" id="actions"></div>
+  </div>
+
+  <div class="grid" id="cards"></div>
+  <div id="error" class="err"></div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const AGENTS = [
+  {key:"auto_hedge",  title:"Auto Hedge",       note:"risk / hedge orchestration"},
+  {key:"vibe_trading",title:"Vibe Trading",     note:"sentiment-driven ideation"},
+  {key:"fincept",     title:"Fincept Terminal", note:"market data & analytics"},
+];
+let autoTimer = null;
+
+// Persist token + capital locally so a refresh doesn't lose them.
+$("#token").value   = localStorage.getItem("fortress_token")   || "";
+$("#capital").value = localStorage.getItem("fortress_capital") || "1000";
+$("#token").oninput   = e => localStorage.setItem("fortress_token", e.target.value);
+$("#capital").oninput = e => localStorage.setItem("fortress_capital", e.target.value);
+
+function headers(){
+  const t = $("#token").value.trim();
+  return t ? {"Authorization":"Bearer "+t, "Content-Type":"application/json"}
+           : {"Content-Type":"application/json"};
+}
+async function api(path, opts={}){
+  const r = await fetch(path, {headers:headers(), ...opts});
+  if(!r.ok){ throw new Error(`${path} → ${r.status} ${await r.text()}`); }
+  return r.json();
+}
+const money = n => n==null ? "—" : "$"+Number(n).toLocaleString(undefined,{maximumFractionDigits:0});
+const pct   = n => (n*100).toFixed(0)+"%";
+
+function renderAccount(a, mode){
+  $("#mode").textContent = mode; $("#mode").className = "pill "+mode;
+  if(!a){ $("#acct").innerHTML = `<div class="empty">Mock mode — set ALPACA_* env vars for a live paper account.</div>`; return; }
+  const pnl = (a.equity||0) - (a.lastEquity||0);
+  const pnlColor = pnl>=0 ? "var(--accent)" : "var(--bad)";
+  $("#acct").innerHTML = `
+    <div class="kv"><span>Equity</span><b>${money(a.equity)}</b></div>
+    <div class="kv"><span>Day P/L</span><b style="color:${pnlColor}">${pnl>=0?"+":""}${money(pnl)}</b></div>
+    <div class="kv"><span>Buying Power</span><b>${money(a.buyingPower)}</b></div>
+    <div class="kv"><span>Cash</span><b>${money(a.cash)}</b></div>
+    <div class="kv"><span>Mode</span><b>${a.mode||mode}</b></div>`;
+}
+
+function renderDecision(d){
+  if(!d){ return; }
+  $("#posture").textContent = d.posture; $("#posture").className = "posture "+d.posture;
+  $("#gate").innerHTML = d.riskGateOpen
+    ? `risk gate <b class="open">OPEN</b> · new positions allowed`
+    : `risk gate <b class="closed">CLOSED</b> · at exposure ceiling`;
+  $("#headline").textContent = d.headline;
+  $("#cycleMeta").textContent =
+    `${d.mode} · ${d.cycleDurationMs}ms · ${new Date(d.generatedAt*1000).toLocaleTimeString()}`;
+
+  const wrap = $("#actions"); wrap.innerHTML = "";
+  if(!d.actions || !d.actions.length){
+    wrap.innerHTML = `<div class="empty">No recommended actions this cycle.</div>`; return;
+  }
+  for(const a of d.actions){
+    const el = document.createElement("div"); el.className="action";
+    el.innerHTML = `
+      <span class="tag ${a.action}">${a.action}</span>
+      <span class="tk">${a.ticker}</span>
+      <span class="rat">${a.rationale}<br><span class="src">${(a.sources||[]).join(" + ")}${a.strategy?" · "+a.strategy:""}</span></span>
+      <span class="conv">${pct(a.conviction)}</span>`;
+    wrap.appendChild(el);
+  }
+}
+
+function renderCards(agentStates, reports){
+  const cards = $("#cards"); cards.innerHTML="";
+  for(const meta of AGENTS){
+    const st = (agentStates||[]).find(s=>s.agent===meta.key) || {status:"IDLE", summary:"Not run yet."};
+    const rep = (reports||[]).find(r=>r.agent===meta.key);
+    const card = document.createElement("div"); card.className="card";
+    let sigs = "";
+    if(rep && rep.signals && rep.signals.length){
+      sigs = rep.signals.slice(0,4).map(s=>`
+        <div class="sig ${s.direction}">
+          <div class="h"><span>${s.ticker} · ${s.direction}</span><span class="conv">${pct(s.conviction)}</span></div>
+          <div class="r">${s.rationale}</div>
+        </div>`).join("");
+    } else if(st.status!=="IDLE"){
+      sigs = `<div class="empty">No signals this cycle.</div>`;
+    }
+    card.innerHTML = `
+      <h3><span class="dot ${st.status}"></span>${meta.title}</h3>
+      <div class="sub">${meta.note}</div>
+      <div class="summary">${st.summary||""}</div>
+      ${rep&&rep.error?`<div class="err">${rep.error}</div>`:""}
+      ${sigs}
+      <div class="meta"><span>${st.status}</span>
+        <span class="hash">${rep?("#"+rep.contentHash):""}</span></div>`;
+    cards.appendChild(card);
+  }
+}
+
+async function refresh(){
+  try{
+    const s = await api("/v1/agents/status");
+    renderAccount(s.account, s.mode);
+    const d = s.lastDecision;
+    renderDecision(d);
+    renderCards(s.agents, d ? d.reports : []);
+    $("#error").textContent = "";
+  }catch(e){ $("#error").textContent = e.message; }
+}
+
+async function runCycle(){
+  $("#run").disabled = true; $("#run").textContent = "Running…";
+  try{
+    const cap = parseInt($("#capital").value||"1000",10);
+    const d = await api("/v1/agents/run", {method:"POST", body:JSON.stringify({capital:cap})});
+    renderDecision(d);
+    renderCards(d.reports.map(r=>({agent:r.agent,status:r.status,summary:r.summary})), d.reports);
+    const s = await api("/v1/agents/status"); renderAccount(s.account, s.mode);
+    $("#error").textContent = "";
+  }catch(e){ $("#error").textContent = e.message; }
+  $("#run").disabled = false; $("#run").textContent = "Run Cycle";
+}
+
+$("#run").onclick = runCycle;
+$("#auto").onclick = () => {
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; $("#auto").textContent="Auto ▶"; }
+  else { runCycle(); autoTimer=setInterval(runCycle, 30000); $("#auto").textContent="Auto ⏸"; }
+};
+
+refresh();
+</script>
+</body>
+</html>
