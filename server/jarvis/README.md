@@ -22,6 +22,23 @@ phone as a spoken briefing, and you can drive it back with chat commands.
    notes* (OGG/Opus) need `ffmpeg` — it's bundled in the Docker image; without it
    Jarvis sends an MP3 audio file instead.
 
+> **Note:** the bot must run somewhere with open internet egress (your machine or a
+> deploy). It cannot run inside a sandboxed environment that blocks `api.telegram.org`.
+
+### Quick local start
+
+The bot polls Telegram in long-poll mode locally — no public URL needed:
+
+```bash
+cd server
+./run_local.sh          # first run scaffolds .env — fill in your token, then:
+./run_local.sh          # boots API + dashboard + Telegram polling
+```
+
+The script creates a virtualenv, installs deps, verifies your token with Telegram
+(`getMe`, prints the bot's @username), and starts the server. Then open
+`http://127.0.0.1:8000/dashboard` and DM your bot `/start`.
+
 ## Telegram commands
 
 | Command | What it does |
