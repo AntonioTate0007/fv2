@@ -11,10 +11,14 @@ Routes (all under /v1, all gated by Authorization: Bearer <FORTRESS_API_TOKEN>):
     GET  /v1/agents/status                  → swarm state + last decision
     POST /v1/agents/run                     → run a cycle → ConsolidatedDecision
     GET  /v1/agents/{name}/report           → one sub-agent's latest report
+    GET  /v1/account/mode                   → {mode: MOCK|PAPER|LIVE}
+    POST /v1/account/mode                   → flip paper⇄live (live needs confirm)
+    POST /v1/jarvis/brief                   → push a Telegram voice+text briefing
 
 Public:
     GET  /                                  → service status
     GET  /dashboard                         → agent-swarm web dashboard (HTML)
+    POST /telegram/webhook/{secret}         → Telegram update sink (bot)
 
 Admin (gated by Authorization: Bearer <ADMIN_TOKEN>):
     POST /admin/test-alert                  → fires a profit-target FCM push
@@ -35,6 +39,7 @@ Env vars:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -46,12 +51,13 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Header, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import alpaca as broker  # type: ignore   # sibling module, both under server/
 from agents import get_orchestrator  # type: ignore   # agents/ package under server/
+from jarvis import assistant as jarvis, telegram  # type: ignore   # jarvis/ package
 
 try:
     import google.generativeai as genai
@@ -148,6 +154,18 @@ class FcmTokenRequest(BaseModel):
 
 class AgentRunRequest(BaseModel):
     capital: int = 1000
+    notify: bool = True       # also push a Jarvis briefing to Telegram (if configured)
+
+
+class ModeRequest(BaseModel):
+    paper: bool               # True = paper trading, False = live (real money)
+    confirm: bool = False     # required to arm LIVE
+
+
+class JarvisBriefRequest(BaseModel):
+    capital: int = 1000
+    voice: bool = True
+    chatId: Optional[str] = None   # defaults to TELEGRAM_CHAT_ID
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
@@ -213,15 +231,56 @@ def init_gemini() -> bool:
     return True
 
 
+async def _telegram_poll_loop():
+    """Long-poll Telegram for updates when no public webhook is configured. Lets the
+    assistant work in local dev without exposing a URL. One-at-a-time, fail-soft."""
+    offset = 0
+    log.info("[telegram] polling loop started")
+    while True:
+        try:
+            updates = await telegram.get_updates(offset)
+            for u in updates:
+                offset = max(offset, int(u.get("update_id", 0)) + 1)
+                try:
+                    await jarvis.handle_update(u)
+                except Exception as e:
+                    log.warning("[telegram] handler error: %s", e)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("[telegram] poll loop error: %s", e)
+            await asyncio.sleep(5)
+
+
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app: FastAPI):
     fb = init_firebase()
     gm = init_gemini()
     al = broker.is_configured()
     mode = "LIVE" if (al and broker.is_live()) else ("PAPER" if al else "MOCK")
-    log.info("[startup] alpaca=%s firebase=%s gemini=%s",
-             mode, "on" if fb else "off", "on" if gm else "off")
-    yield
+
+    # Telegram: prefer a webhook when we have a public URL, else fall back to polling.
+    tg = telegram.is_configured()
+    app.state.tg_poll_task = None
+    if tg:
+        base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+        secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+        if base:
+            url = f"{base}/telegram/webhook/{secret or 'hook'}"
+            await telegram.set_webhook(url, secret)
+            log.info("[telegram] webhook → %s", url)
+        else:
+            await telegram.delete_webhook()  # ensure no stale webhook blocks polling
+            app.state.tg_poll_task = asyncio.create_task(_telegram_poll_loop())
+
+    log.info("[startup] alpaca=%s firebase=%s gemini=%s telegram=%s",
+             mode, "on" if fb else "off", "on" if gm else "off", "on" if tg else "off")
+    try:
+        yield
+    finally:
+        task = getattr(app.state, "tg_poll_task", None)
+        if task:
+            task.cancel()
 
 
 app = FastAPI(title="Fortress API", version="7.0", lifespan=lifespan)
@@ -323,6 +382,7 @@ def root():
                    "PAPER" if al else "MOCK"),
         "gemini": init_gemini(),
         "firebase": init_firebase(),
+        "telegram": telegram.is_configured(),
         "tokens_registered": len(FCM_TOKENS),
     }
 
@@ -413,11 +473,19 @@ def agents_status():
 
 
 @app.post("/v1/agents/run", dependencies=[Depends(require_app_auth)])
-def agents_run(req: AgentRunRequest):
+async def agents_run(req: AgentRunRequest):
     """Trigger one orchestration cycle: all three sub-agents analyze the same
-    market snapshot and report back; the orchestrator fuses them into a decision."""
+    market snapshot and report back; the orchestrator fuses them into a decision.
+    When Telegram is configured, also push a Jarvis briefing to the owner."""
     decision = get_orchestrator().run_cycle(capital=req.capital)
-    return decision.model_dump()
+    payload = decision.model_dump()
+    if req.notify and telegram.is_configured() and telegram.default_chat_id():
+        # Don't let a Telegram hiccup fail the API call.
+        try:
+            await jarvis.brief(None, payload, voice=True)
+        except Exception as e:
+            log.warning("[jarvis] briefing after run failed: %s", e)
+    return payload
 
 
 @app.get("/v1/agents/{name}/report", dependencies=[Depends(require_app_auth)])
@@ -446,6 +514,69 @@ def dashboard():
     (or works token-free in local mock mode) and polls the /v1/agents/* routes."""
     here = os.path.dirname(os.path.abspath(__file__))
     return FileResponse(os.path.join(here, "dashboard", "index.html"))
+
+
+# ── Trading mode (paper ⇄ live) ─────────────────────────────────────────────────
+
+@app.get("/v1/account/mode", dependencies=[Depends(require_app_auth)])
+def get_mode():
+    configured = broker.is_configured()
+    return {
+        "configured": configured,
+        "mode": ("LIVE" if configured and broker.is_live()
+                 else "PAPER" if configured else "MOCK"),
+        "live": configured and broker.is_live(),
+    }
+
+
+@app.post("/v1/account/mode", dependencies=[Depends(require_app_auth)])
+def set_mode(req: ModeRequest):
+    """Flip paper⇄live at runtime. Going LIVE arms REAL orders and requires
+    `confirm: true`. In mock mode (no Alpaca keys) there's nothing to switch."""
+    if not broker.is_configured():
+        raise HTTPException(409, "broker not configured — set ALPACA_API_KEY/_SECRET")
+    if not req.paper and not req.confirm:
+        raise HTTPException(400, "switching to LIVE requires confirm=true — real money")
+    broker.set_paper_mode(req.paper)
+    mode = "PAPER" if req.paper else "LIVE"
+    log.warning("[mode] runtime trading mode set to %s", mode)
+    return {"ok": True, "mode": mode, "live": not req.paper}
+
+
+# ── Jarvis (Telegram personal assistant) ────────────────────────────────────────
+
+@app.post("/v1/jarvis/brief", dependencies=[Depends(require_app_auth)])
+async def jarvis_brief(req: JarvisBriefRequest):
+    """Run a cycle and push a spoken+text briefing to Telegram on demand."""
+    if not telegram.is_configured():
+        raise HTTPException(409, "Telegram not configured — set TELEGRAM_BOT_TOKEN")
+    decision = get_orchestrator().run_cycle(capital=req.capital)
+    chat = req.chatId or telegram.default_chat_id()
+    if not chat:
+        raise HTTPException(400, "no chat id — set TELEGRAM_CHAT_ID or pass chatId")
+    ok = await jarvis.brief(chat, decision.model_dump(), voice=req.voice)
+    return {"sent": ok, "mode": decision.mode, "posture": decision.posture}
+
+
+@app.post("/telegram/webhook/{secret}", include_in_schema=False)
+async def telegram_webhook(secret: str, request: Request):
+    """Receive Telegram updates. Auth via path secret AND the secret-token header
+    Telegram echoes back (both compared to TELEGRAM_WEBHOOK_SECRET when set)."""
+    expected = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if expected:
+        header = request.headers.get("x-telegram-bot-api-secret-token", "")
+        if not (secrets.compare_digest(secret, expected)
+                and secrets.compare_digest(header, expected)):
+            raise HTTPException(403, "bad webhook secret")
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}  # ignore malformed posts
+    try:
+        await jarvis.handle_update(update)
+    except Exception as e:
+        log.warning("[telegram] webhook handler error: %s", e)
+    return {"ok": True}
 
 
 # ── Admin / debug ───────────────────────────────────────────────────────────────

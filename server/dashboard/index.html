@@ -29,6 +29,10 @@
   button.primary{background:#1f6f33;border-color:#2ea043}
   button.primary:hover{background:#2ea043}
   button:disabled{opacity:.5;cursor:not-allowed}
+  .modeswitch{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .seg{border:0;border-radius:0;padding:7px 12px;background:var(--panel2);color:var(--dim)}
+  .seg.on{color:#fff}
+  #mPaper.on{background:#1f4f8f} #mLive.on{background:#8f1f1f}
   main{max-width:1180px;margin:0 auto;padding:20px}
   .acct{display:flex;gap:24px;flex-wrap:wrap;padding:14px 18px;margin-bottom:18px;
     background:var(--panel);border:1px solid var(--line);border-radius:10px}
@@ -82,9 +86,13 @@
 <header>
   <h1>⛬ FORTRESS <span class="v">Agent Swarm</span></h1>
   <span id="mode" class="pill MOCK">MOCK</span>
+  <span class="modeswitch" title="Trading mode">
+    <button id="mPaper" class="seg">Paper</button><button id="mLive" class="seg">Live</button>
+  </span>
   <span class="spacer"></span>
   <input id="token" type="password" placeholder="API bearer token (blank in mock)" size="22"/>
   <input id="capital" type="number" value="1000" min="100" step="100" title="Capital per trade" style="width:90px"/>
+  <button id="brief" title="Run a cycle and send a voice+text briefing to Telegram">🔊 Brief</button>
   <button id="auto" title="Toggle 30s auto-refresh">Auto ▶</button>
   <button id="run" class="primary">Run Cycle</button>
 </header>
@@ -135,8 +143,41 @@ async function api(path, opts={}){
 const money = n => n==null ? "—" : "$"+Number(n).toLocaleString(undefined,{maximumFractionDigits:0});
 const pct   = n => (n*100).toFixed(0)+"%";
 
+function renderMode(mode){
+  const live = mode === "LIVE";
+  $("#mPaper").classList.toggle("on", mode === "PAPER");
+  $("#mLive").classList.toggle("on", live);
+  // In mock mode there's no broker to switch — disable the segments.
+  const mock = mode === "MOCK";
+  $("#mPaper").disabled = mock; $("#mLive").disabled = mock;
+}
+
+async function setMode(paper){
+  const mode = $("#mode").textContent;
+  if(mode === "MOCK"){ $("#error").textContent = "Mock mode — set ALPACA_* keys to trade."; return; }
+  if(!paper && !confirm("LIVE means REAL orders against real money. Continue?")) return;
+  try{
+    const r = await api("/v1/account/mode", {method:"POST",
+      body: JSON.stringify({paper: paper, confirm: !paper})});
+    renderMode(r.mode); $("#mode").textContent = r.mode; $("#mode").className = "pill "+r.mode;
+    $("#error").textContent = "";
+  }catch(e){ $("#error").textContent = e.message; }
+}
+
+async function briefTelegram(){
+  $("#brief").disabled = true;
+  try{
+    const cap = parseInt($("#capital").value||"1000",10);
+    const r = await api("/v1/jarvis/brief", {method:"POST", body:JSON.stringify({capital:cap, voice:true})});
+    $("#error").textContent = r.sent ? "" : "Briefing built but Telegram send failed — check TELEGRAM_* config.";
+    await refresh();
+  }catch(e){ $("#error").textContent = e.message; }
+  $("#brief").disabled = false;
+}
+
 function renderAccount(a, mode){
   $("#mode").textContent = mode; $("#mode").className = "pill "+mode;
+  renderMode(mode);
   if(!a){ $("#acct").innerHTML = `<div class="empty">Mock mode — set ALPACA_* env vars for a live paper account.</div>`; return; }
   const pnl = (a.equity||0) - (a.lastEquity||0);
   const pnlColor = pnl>=0 ? "var(--accent)" : "var(--bad)";
@@ -226,6 +267,9 @@ async function runCycle(){
 }
 
 $("#run").onclick = runCycle;
+$("#brief").onclick = briefTelegram;
+$("#mPaper").onclick = () => setMode(true);
+$("#mLive").onclick = () => setMode(false);
 $("#auto").onclick = () => {
   if(autoTimer){ clearInterval(autoTimer); autoTimer=null; $("#auto").textContent="Auto ▶"; }
   else { runCycle(); autoTimer=setInterval(runCycle, 30000); $("#auto").textContent="Auto ⏸"; }

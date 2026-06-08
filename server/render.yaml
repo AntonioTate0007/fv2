@@ -20,3 +20,14 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         generateValue: true
+      # ── Jarvis / Telegram assistant ──────────────────────────────────────────
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: PUBLIC_BASE_URL          # set to this service's public URL to enable webhooks
+        sync: false
+      - key: ELEVENLABS_API_KEY       # optional premium TTS; gTTS used when blank
+        sync: false

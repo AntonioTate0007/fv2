@@ -69,13 +69,42 @@ def _api_secret() -> str | None:
     return os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET_KEY")
 
 
+# Runtime paper/live override. None → defer to the ALPACA_PAPER env var.
+# True → force paper, False → force live. Set via set_paper_mode().
+_mode_override: "bool | None" = None
+
+
 def is_configured() -> bool:
     return HAS_ALPACA and bool(_api_key()) and bool(_api_secret())
 
 
 def is_live() -> bool:
-    """True only when ALPACA_PAPER is explicitly set to a falsy string."""
+    """True only when ALPACA_PAPER is explicitly set to a falsy string.
+
+    A runtime override (set via the dashboard / Telegram /mode command) takes
+    precedence over the env var so the operator can flip paper↔live without a
+    redeploy. The override is intentionally process-local and resets on restart.
+    """
+    if _mode_override is not None:
+        return not _mode_override
     return os.getenv("ALPACA_PAPER", "true").strip().lower() in ("false", "0", "no")
+
+
+def set_paper_mode(paper: bool) -> None:
+    """Flip the live/paper switch at runtime. Resets the cached trading client so
+    the next broker call rebuilds against the new endpoint. Going live means REAL
+    money — callers must gate this behind an explicit confirmation."""
+    global _mode_override, _trading
+    _mode_override = bool(paper)
+    _trading = None  # force the singleton to rebuild with the new `paper` flag
+    log.warning("[alpaca] runtime mode set to %s", "PAPER" if paper else "LIVE")
+
+
+def clear_mode_override() -> None:
+    """Drop the runtime override and fall back to the ALPACA_PAPER env var."""
+    global _mode_override, _trading
+    _mode_override = None
+    _trading = None
 
 
 # ── Clients (lazy singletons) ───────────────────────────────────────────────────
