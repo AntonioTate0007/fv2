@@ -1,0 +1,35 @@
+# Root Render blueprint so the "Deploy to Render" button works out of the box.
+# The actual service lives in server/ (rootDir below). Mirrors server/render.yaml.
+services:
+  - type: web
+    name: fortress-api
+    runtime: docker
+    rootDir: server
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: FORTRESS_API_TOKEN
+        generateValue: true
+      - key: ALPACA_API_KEY        # paste your Alpaca paper key in the Render UI
+        sync: false
+      - key: ALPACA_API_SECRET     # paste your Alpaca paper secret in the Render UI
+        sync: false
+      - key: ALPACA_PAPER
+        value: "true"              # paper trading — no real money
+      - key: GEMINI_API_KEY        # optional: chat + Vibe agent
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      # ── Jarvis / Telegram assistant ──────────────────────────────────────────
+      - key: TELEGRAM_BOT_TOKEN    # optional: paste @BotFather token for the bot
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: PUBLIC_BASE_URL       # set to the service URL after first deploy to enable the bot webhook
+        sync: false
+      - key: ELEVENLABS_API_KEY    # optional premium TTS; gTTS used when blank
+        sync: false
