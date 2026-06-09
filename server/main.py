@@ -55,6 +55,14 @@ from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request, sta
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+# Load server/.env into the environment for local runs (no-op in prod where the
+# host injects env vars directly, and harmless if python-dotenv isn't installed).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 import alpaca as broker  # type: ignore   # sibling module, both under server/
 from agents import get_orchestrator  # type: ignore   # agents/ package under server/
 from jarvis import assistant as jarvis, telegram  # type: ignore   # jarvis/ package
