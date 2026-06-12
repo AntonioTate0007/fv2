@@ -1,0 +1,55 @@
+name: Build Plays APK
+
+on:
+  push:
+    branches:
+      - "claude/fortress-options-bot-azenqp"
+    paths:
+      - "plays-app/**"
+      - ".github/workflows/plays-app-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: plays-app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plays-debug-apk
+          path: plays-app/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Publish APK to a downloadable release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: plays-app-latest
+          name: Plays App (latest debug build)
+          body: |
+            Installable debug build of the Plays app.
+
+            On your phone: open this page, download `app-debug.apk`, and tap it to
+            install (you may need to allow "install from unknown sources").
+          prerelease: true
+          files: plays-app/app/build/outputs/apk/debug/app-debug.apk

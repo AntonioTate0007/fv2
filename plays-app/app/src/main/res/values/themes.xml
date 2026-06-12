@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns the real theme; this base just renders a dark system shell
+         (status bar / splash) so it matches the dark UI before Compose mounts. -->
+    <style name="Theme.Plays" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:navigationBarColor">#121212</item>
+    </style>
+</resources>
