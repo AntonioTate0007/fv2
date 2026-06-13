@@ -82,6 +82,10 @@ fun SettingsScreen(
         }
 
         KeyField("OpenRouter model", state.orModel, viewModel::setOrModel, secret = false)
+        Text(
+            "Mark auto-rotates through free models if this one is busy, so you can leave it as-is.",
+            color = TextDim, style = MaterialTheme.typography.labelLarge
+        )
 
         Button(
             onClick = { viewModel.save(); onBack() },

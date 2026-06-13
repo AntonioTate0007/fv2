@@ -48,18 +48,28 @@ class Brain(private val context: Context) {
             out.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
             lastErr = out.exceptionOrNull()?.message
         }
-        return "My uplink glitched (${lastErr ?: "no response"}). Try again in a moment, or check " +
-            "your API keys in Settings."
+        val rateLimited = lastErr?.contains("429") == true
+        return if (rateLimited)
+            "Every free model is busy right now — I tried a few. Give it a minute and ask again. " +
+                "Adding a Gemini key in Settings makes this almost never happen."
+        else
+            "My uplink glitched (${lastErr ?: "no response"}). Try again in a moment, or check " +
+                "your API keys in Settings."
     }
 
     /** Build the provider try-order from preference + which keys exist. */
     private fun orderedClients(s: Prefs.Snapshot): List<LlmClient> {
-        val gemini = s.geminiKey.takeIf { it.isNotBlank() }?.let { GeminiClient(it) }
-        val openRouter = s.openRouterKey.takeIf { it.isNotBlank() }?.let { OpenRouterClient(it, s.orModel) }
+        val gemini = s.geminiKey.takeIf { it.isNotBlank() }?.let { listOf(GeminiClient(it)) }.orEmpty()
+        // One OpenRouter client per free model: the user's pick first, then the rest of
+        // the pool. The askLlm loop tries each in turn, so a 429 on one model rolls to
+        // the next with no user action.
+        val openRouter = s.openRouterKey.takeIf { it.isNotBlank() }?.let { key ->
+            (listOf(s.orModel) + Prefs.FREE_OR_MODELS).distinct().map { OpenRouterClient(key, it) }
+        }.orEmpty()
         return when (s.provider) {
-            Provider.GEMINI -> listOfNotNull(gemini, openRouter)
-            Provider.OPENROUTER -> listOfNotNull(openRouter, gemini)
-            Provider.AUTO -> listOfNotNull(gemini, openRouter)
+            Provider.GEMINI -> gemini + openRouter
+            Provider.OPENROUTER -> openRouter + gemini
+            Provider.AUTO -> gemini + openRouter
         }
     }
 

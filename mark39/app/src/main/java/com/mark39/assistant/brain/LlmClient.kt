@@ -53,11 +53,6 @@ class GeminiClient(private val apiKey: String, model: String = "gemini-2.0-flash
 /** OpenRouter (free-tier models), OpenAI-compatible chat completions over HTTPS. */
 class OpenRouterClient(private val apiKey: String, private val model: String) : LlmClient {
 
-    private val http = OkHttpClient.Builder()
-        .callTimeout(60, TimeUnit.SECONDS)
-        .build()
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
     override suspend fun complete(system: String, history: List<Pair<String, String>>, user: String): String =
         withContext(Dispatchers.IO) {
             val messages = buildList {
@@ -86,4 +81,10 @@ class OpenRouterClient(private val apiKey: String, private val model: String) : 
     @Serializable private data class ChatRequest(val model: String, val messages: List<Msg>)
     @Serializable private data class Choice(val message: Msg)
     @Serializable private data class ChatResponse(val choices: List<Choice> = emptyList())
+
+    private companion object {
+        // Shared across every per-model client so rotation doesn't spin up a pool each.
+        val http = OkHttpClient.Builder().callTimeout(60, TimeUnit.SECONDS).build()
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    }
 }

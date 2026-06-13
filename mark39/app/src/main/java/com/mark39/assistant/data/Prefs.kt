@@ -27,7 +27,20 @@ object Prefs {
     private val PROVIDER = stringPreferencesKey("provider")
     private val OR_MODEL = stringPreferencesKey("or_model")
 
-    const val DEFAULT_OR_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+    const val DEFAULT_OR_MODEL = "deepseek/deepseek-chat-v3-0324:free"
+
+    /**
+     * The free OpenRouter models Mark rotates through. When one returns 429
+     * (rate-limited upstream), the brain silently rolls to the next — so the user
+     * never has to swap models by hand. The user's chosen model is always tried first.
+     */
+    val FREE_OR_MODELS = listOf(
+        "deepseek/deepseek-chat-v3-0324:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemini-2.0-flash-exp:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "mistralai/mistral-small-3.1-24b-instruct:free",
+    )
 
     fun geminiKey(c: Context): Flow<String> =
         c.dataStore.data.map { it[GEMINI] ?: BuildConfig.DEFAULT_GEMINI_KEY }
