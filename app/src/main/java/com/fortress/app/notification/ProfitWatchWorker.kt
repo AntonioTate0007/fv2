@@ -14,11 +14,9 @@ import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 /**
- * Periodic background check (15-min cadence) that fetches open positions and fires a local
- * lock-screen notification for any that newly crossed the 50% profit-take threshold.
- *
- * Replaces the FCM push that would normally come from the backend — works without any
- * Google project / push provider, runs entirely on-device + your existing API.
+ * Periodic background check (15-min cadence). Fetches the Autopilot activity feed
+ * and fires a local notification for any newly-placed trades the user hasn't seen,
+ * so trade execution surfaces even when the app is closed.
  */
 class ProfitWatchWorker(
     appContext: Context,
@@ -29,48 +27,35 @@ class ProfitWatchWorker(
         val ctx = applicationContext
         val repo = FortressRepository(ctx)
 
-        val positions = runCatching { repo.positions() }.getOrElse {
-            // Transient network failure — let WorkManager retry on its own backoff.
-            return Result.retry()
-        }
-
+        val activity = runCatching { repo.activity() }.getOrElse { return Result.retry() }
         FortressFirebaseMessagingService.ensureChannel(ctx)
 
-        val alreadyAlerted = AppPreferences.alertedPositionIdsFlow(ctx).first()
-        positions
-            .filter { it.atProfitTarget && it.id !in alreadyAlerted }
-            .forEach { pos ->
-                ProfitAlertManager.notify(ctx, pos)
-                AppPreferences.markAlerted(ctx, pos.id)
+        val seen = AppPreferences.alertedPositionIdsFlow(ctx).first()
+        activity
+            .filter { it.type == "TRADE" && it.id !in seen }
+            .forEach { item ->
+                ProfitAlertManager.notify(ctx, item)
+                AppPreferences.markAlerted(ctx, item.id)
             }
 
-        // Drop ids for positions that no longer exist (closed) so we re-alert if a fresh
-        // position with the same id ever shows up.
-        AppPreferences.pruneAlerted(ctx, positions.map { it.id }.toSet())
-
+        // Keep the seen-set bounded to the ids that still exist in the feed.
+        AppPreferences.pruneAlerted(ctx, activity.map { it.id }.toSet())
         return Result.success()
     }
 
     companion object {
-        private const val UNIQUE_NAME = "fortress.profit_watch"
+        private const val UNIQUE_NAME = "autopilot.trade_watch"
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
-
             val request = PeriodicWorkRequestBuilder<ProfitWatchWorker>(15, TimeUnit.MINUTES)
                 .setConstraints(constraints)
-                .setBackoffCriteria(
-                    androidx.work.BackoffPolicy.EXPONENTIAL,
-                    30, TimeUnit.SECONDS
-                )
+                .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()
-
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                UNIQUE_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
+                UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, request
             )
         }
     }

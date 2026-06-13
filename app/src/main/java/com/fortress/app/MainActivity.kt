@@ -29,9 +29,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.fortress.app.ui.navigation.FortressDestination
-import com.fortress.app.ui.screens.armory.ArmoryScreen
-import com.fortress.app.ui.screens.chat.ChatScreen
-import com.fortress.app.ui.screens.radar.RadarScreen
+import com.fortress.app.ui.screens.activity.ActivityScreen
+import com.fortress.app.ui.screens.discover.DiscoverScreen
+import com.fortress.app.ui.screens.home.HomeScreen
 import com.fortress.app.ui.screens.settings.SettingsScreen
 import com.fortress.app.ui.theme.FortressBorder
 import com.fortress.app.ui.theme.FortressTheme
@@ -116,9 +116,9 @@ private fun FortressRoot() {
             startDestination = FortressDestination.Start.route,
             modifier = Modifier.fillMaxSize()
         ) {
-            composable(FortressDestination.Radar.route) { RadarScreen(contentPadding = padding) }
-            composable(FortressDestination.Armory.route) { ArmoryScreen(contentPadding = padding) }
-            composable(FortressDestination.Officer.route) { ChatScreen(contentPadding = padding) }
+            composable(FortressDestination.Home.route) { HomeScreen(contentPadding = padding) }
+            composable(FortressDestination.Discover.route) { DiscoverScreen(contentPadding = padding) }
+            composable(FortressDestination.Activity.route) { ActivityScreen(contentPadding = padding) }
             composable(FortressDestination.Settings.route) { SettingsScreen(contentPadding = padding) }
         }
     }

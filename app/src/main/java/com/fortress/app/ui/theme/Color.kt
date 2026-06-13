@@ -2,19 +2,23 @@ package com.fortress.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand palette — light, ultra-minimalist (Robinhood-style).
-val FortressBlack = Color(0xFF000000)
+// Brand palette — light, ultra-minimalist (Autopilot / Robinhood-style).
+val FortressBlack = Color(0xFF0B0B0C)
 val FortressWhite = Color(0xFFFFFFFF)
-val FortressOffWhite = Color(0xFFF7F7F7)
-val FortressBorder = Color(0xFFE5E5E5)
+val FortressOffWhite = Color(0xFFF5F6F8)
+val FortressBorder = Color(0xFFE6E8EC)
+
+// Autopilot accent — the blue used on the Install button / primary actions.
+val AutopilotBlue = Color(0xFF1A56F0)
+val AutopilotBlueSoft = Color(0xFFE8EEFF)
 
 // Semantic colors
-val ProfitGreen = Color(0xFF00C853)
-val ProfitGreenSoft = Color(0xFFE8F8EE)
-val RiskRed = Color(0xFFD32F2F)
+val ProfitGreen = Color(0xFF00B25B)
+val ProfitGreenSoft = Color(0xFFE6F7EE)
+val RiskRed = Color(0xFFE0382B)
 val RiskRedSoft = Color(0xFFFDEBEB)
 
 // Text
-val TextPrimary = Color(0xFF111111)
-val TextSecondary = Color(0xFF6B6B6B)
-val TextTertiary = Color(0xFFA0A0A0)
+val TextPrimary = Color(0xFF0B0B0C)
+val TextSecondary = Color(0xFF5B616E)
+val TextTertiary = Color(0xFF9AA0AB)

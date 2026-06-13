@@ -4,8 +4,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
-private val FortressLightColors = lightColorScheme(
-    primary = FortressBlack,
+private val AutopilotLightColors = lightColorScheme(
+    primary = AutopilotBlue,
     onPrimary = FortressWhite,
     secondary = ProfitGreen,
     onSecondary = FortressWhite,
@@ -23,7 +23,7 @@ private val FortressLightColors = lightColorScheme(
 @Composable
 fun FortressTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = FortressLightColors,
+        colorScheme = AutopilotLightColors,
         typography = FortressTypography,
         content = content
     )
