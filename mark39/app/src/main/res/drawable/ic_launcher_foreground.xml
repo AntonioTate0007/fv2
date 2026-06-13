@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Arc-reactor mark: concentric rings with a bright core, centered in the
+         adaptive-icon safe zone. -->
+    <path
+        android:strokeColor="#34D2FF"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M54,30 a24,24 0 1,0 0.1,0 Z" />
+    <path
+        android:strokeColor="#7FE7FF"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M54,38 a16,16 0 1,0 0.1,0 Z" />
+    <path
+        android:fillColor="#BFF3FF"
+        android:pathData="M54,46 a8,8 0 1,0 0.1,0 Z" />
+</vector>
