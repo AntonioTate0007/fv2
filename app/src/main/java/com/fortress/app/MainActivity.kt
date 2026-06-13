@@ -31,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import com.fortress.app.ui.navigation.FortressDestination
 import com.fortress.app.ui.screens.armory.ArmoryScreen
 import com.fortress.app.ui.screens.chat.ChatScreen
+import com.fortress.app.ui.screens.jarvis.JarvisScreen
 import com.fortress.app.ui.screens.radar.RadarScreen
 import com.fortress.app.ui.screens.settings.SettingsScreen
 import com.fortress.app.ui.theme.FortressBorder
@@ -116,6 +117,7 @@ private fun FortressRoot() {
             startDestination = FortressDestination.Start.route,
             modifier = Modifier.fillMaxSize()
         ) {
+            composable(FortressDestination.Jarvis.route) { JarvisScreen(contentPadding = padding) }
             composable(FortressDestination.Radar.route) { RadarScreen(contentPadding = padding) }
             composable(FortressDestination.Armory.route) { ArmoryScreen(contentPadding = padding) }
             composable(FortressDestination.Officer.route) { ChatScreen(contentPadding = padding) }
