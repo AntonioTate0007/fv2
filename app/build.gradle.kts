@@ -30,11 +30,13 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.fortress.app"
+        // Distinct id so the app installs cleanly alongside any older
+        // com.fortress.app build (avoids debug-signature install conflicts).
+        applicationId = "com.autopilot.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "7.0"
+        versionCode = 8
+        versionName = "8.0"
 
         // Backend URL + bearer come from local.properties (kept out of git).
         // To go live: drop these two lines into local.properties:
