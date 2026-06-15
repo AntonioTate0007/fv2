@@ -40,7 +40,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -51,13 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fortress.app.ui.components.money
 import com.fortress.app.ui.components.pct
-import com.fortress.app.ui.theme.FortressBlack
-import com.fortress.app.ui.theme.FortressBorder
-import com.fortress.app.ui.theme.FortressOffWhite
-import com.fortress.app.ui.theme.ProfitGreen
-import com.fortress.app.ui.theme.RiskRed
-import com.fortress.app.ui.theme.TextPrimary
-import com.fortress.app.ui.theme.TextSecondary
+import com.fortress.app.ui.theme.appColors
 
 @Composable
 fun SettingsScreen(
@@ -77,7 +70,7 @@ fun SettingsScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        Text("Settings", style = MaterialTheme.typography.displayLarge, color = TextPrimary)
+        Text("Settings", style = MaterialTheme.typography.displayLarge, color = appColors.textPrimary)
 
         // ── Account ───────────────────────────────────────────────────────────
         Card("Brokerage") {
@@ -87,24 +80,24 @@ fun SettingsScreen(
         }
 
         // ── Kill switch ───────────────────────────────────────────────────────
-        Surface(shape = RoundedCornerShape(20.dp), color = FortressOffWhite, modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = RoundedCornerShape(20.dp), color = appColors.surfaceAlt, modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Autopilot", style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary, fontWeight = FontWeight.Bold)
+                        color = appColors.textPrimary, fontWeight = FontWeight.Bold)
                     Text(
                         if (s.killSwitch) "Paused — no trades will be placed."
                         else "Active — keeping your account on target.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (s.killSwitch) RiskRed else ProfitGreen
+                        color = if (s.killSwitch) appColors.risk else appColors.profit
                     )
                 }
                 Switch(
                     checked = !s.killSwitch,
                     onCheckedChange = { viewModel.setKillSwitch(!it) },
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = ProfitGreen
+                        checkedThumbColor = appColors.onAccent,
+                        checkedTrackColor = appColors.profit
                     )
                 )
             }
@@ -134,16 +127,16 @@ fun SettingsScreen(
         }
 
         // ── Gemini key ───────────────────────────────────────────────────────
-        Surface(shape = RoundedCornerShape(20.dp), color = FortressOffWhite, modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = RoundedCornerShape(20.dp), color = appColors.surfaceAlt, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Gemini AI", style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        color = appColors.textPrimary, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
                     StatusChip(state.keyStatus)
                 }
                 Spacer(Modifier.height(4.dp))
                 Text("Optional — powers AI portfolio rationale. Free key at aistudio.google.com.",
-                    style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary)
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = state.draftKey,
@@ -158,18 +151,18 @@ fun SettingsScreen(
                         IconButton(onClick = viewModel::toggleVisibility) {
                             Icon(
                                 if (state.keyVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                                contentDescription = "Toggle visibility", tint = TextSecondary
+                                contentDescription = "Toggle visibility", tint = appColors.textSecondary
                             )
                         }
                     },
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = FortressBlack,
-                        unfocusedBorderColor = FortressBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary,
-                        focusedLabelColor = FortressBlack,
-                        cursorColor = FortressBlack
+                        focusedBorderColor = appColors.accent,
+                        unfocusedBorderColor = appColors.border,
+                        focusedTextColor = appColors.textPrimary,
+                        unfocusedTextColor = appColors.textPrimary,
+                        focusedLabelColor = appColors.accent,
+                        cursorColor = appColors.accent
                     )
                 )
                 Spacer(Modifier.height(12.dp))
@@ -179,17 +172,17 @@ fun SettingsScreen(
                         enabled = state.draftKey.isNotBlank() && state.keyStatus != SettingsViewModel.KeyStatus.TESTING,
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = FortressBlack, contentColor = Color.White)
+                        colors = ButtonDefaults.buttonColors(containerColor = appColors.accent, contentColor = appColors.onAccent)
                     ) {
                         if (state.keyStatus == SettingsViewModel.KeyStatus.TESTING) {
-                            CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                            CircularProgressIndicator(Modifier.size(18.dp), color = appColors.onAccent, strokeWidth = 2.dp)
                         } else Text("Save & Test", fontWeight = FontWeight.Bold)
                     }
                     if (state.savedKey.isNotBlank()) {
                         TextButton(onClick = { viewModel.clearKey(context) }, modifier = Modifier.height(48.dp)) {
-                            Icon(Icons.Filled.Delete, "Clear", tint = RiskRed, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Filled.Delete, "Clear", tint = appColors.risk, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(4.dp))
-                            Text("Clear", color = RiskRed)
+                            Text("Clear", color = appColors.risk)
                         }
                     }
                 }
@@ -199,16 +192,16 @@ fun SettingsScreen(
         Text(
             "Autopilot trades equities/ETFs in your Robinhood cash account only, within the " +
                 "guardrails above. Fully automatic — flip the switch off any time to pause.",
-            style = MaterialTheme.typography.bodySmall, color = TextSecondary
+            style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary
         )
     }
 }
 
 @Composable
 private fun Card(title: String, content: @Composable () -> Unit) {
-    Surface(shape = RoundedCornerShape(20.dp), color = FortressOffWhite, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(20.dp), color = appColors.surfaceAlt, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, color = TextPrimary, fontWeight = FontWeight.Bold)
+            Text(title, style = MaterialTheme.typography.titleLarge, color = appColors.textPrimary, fontWeight = FontWeight.Bold)
             content()
         }
     }
@@ -217,8 +210,8 @@ private fun Card(title: String, content: @Composable () -> Unit) {
 @Composable
 private fun RowLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = TextSecondary, modifier = Modifier.weight(1f))
-        Text(value, style = MaterialTheme.typography.bodyMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = appColors.textPrimary, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -226,15 +219,15 @@ private fun RowLine(label: String, value: String) {
 private fun SliderRow(label: String, value: String, fraction: Float, onChange: (Double) -> Unit) {
     Column {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = TextSecondary, modifier = Modifier.weight(1f))
-            Text(value, style = MaterialTheme.typography.titleMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary, modifier = Modifier.weight(1f))
+            Text(value, style = MaterialTheme.typography.titleMedium, color = appColors.textPrimary, fontWeight = FontWeight.Bold)
         }
         Slider(
             value = fraction,
             onValueChange = { onChange(it.toDouble()) },
             colors = SliderDefaults.colors(
-                thumbColor = FortressBlack,
-                activeTrackColor = FortressBlack
+                thumbColor = appColors.accent,
+                activeTrackColor = appColors.accent
             )
         )
     }
@@ -243,21 +236,21 @@ private fun SliderRow(label: String, value: String, fraction: Float, onChange: (
 @Composable
 private fun StatusChip(status: SettingsViewModel.KeyStatus) {
     when (status) {
-        SettingsViewModel.KeyStatus.VALID -> Surface(shape = RoundedCornerShape(50), color = ProfitGreen.copy(alpha = 0.12f)) {
+        SettingsViewModel.KeyStatus.VALID -> Surface(shape = RoundedCornerShape(50), color = appColors.profit.copy(alpha = 0.12f)) {
             Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.CheckCircle, null, tint = ProfitGreen, modifier = Modifier.size(14.dp))
+                Icon(Icons.Filled.CheckCircle, null, tint = appColors.profit, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.size(4.dp))
-                Text("Connected", style = MaterialTheme.typography.labelMedium, color = ProfitGreen)
+                Text("Connected", style = MaterialTheme.typography.labelMedium, color = appColors.profit)
             }
         }
-        SettingsViewModel.KeyStatus.INVALID -> Surface(shape = RoundedCornerShape(50), color = RiskRed.copy(alpha = 0.12f)) {
+        SettingsViewModel.KeyStatus.INVALID -> Surface(shape = RoundedCornerShape(50), color = appColors.risk.copy(alpha = 0.12f)) {
             Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Error, null, tint = RiskRed, modifier = Modifier.size(14.dp))
+                Icon(Icons.Filled.Error, null, tint = appColors.risk, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.size(4.dp))
-                Text("Invalid key", style = MaterialTheme.typography.labelMedium, color = RiskRed)
+                Text("Invalid key", style = MaterialTheme.typography.labelMedium, color = appColors.risk)
             }
         }
-        SettingsViewModel.KeyStatus.TESTING -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = TextSecondary)
+        SettingsViewModel.KeyStatus.TESTING -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = appColors.textSecondary)
         SettingsViewModel.KeyStatus.IDLE -> {}
     }
 }

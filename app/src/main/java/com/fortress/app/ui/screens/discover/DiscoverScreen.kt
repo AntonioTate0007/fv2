@@ -35,7 +35,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -46,13 +45,7 @@ import com.fortress.app.ui.components.PortfolioAvatar
 import com.fortress.app.ui.components.Sparkline
 import com.fortress.app.ui.components.pct
 import com.fortress.app.ui.components.signedPct
-import com.fortress.app.ui.theme.FortressBlack
-import com.fortress.app.ui.theme.FortressBorder
-import com.fortress.app.ui.theme.FortressOffWhite
-import com.fortress.app.ui.theme.ProfitGreen
-import com.fortress.app.ui.theme.RiskRed
-import com.fortress.app.ui.theme.TextPrimary
-import com.fortress.app.ui.theme.TextSecondary
+import com.fortress.app.ui.theme.appColors
 
 @Composable
 fun DiscoverScreen(
@@ -72,13 +65,13 @@ fun DiscoverScreen(
     ) {
         item {
             Column {
-                Text("Find your", style = MaterialTheme.typography.titleMedium, color = TextSecondary)
-                Text("Portfolio", style = MaterialTheme.typography.displayLarge, color = TextPrimary)
+                Text("Find your", style = MaterialTheme.typography.titleMedium, color = appColors.textSecondary)
+                Text("Portfolio", style = MaterialTheme.typography.displayLarge, color = appColors.textPrimary)
             }
         }
         item {
             Text("Top performers", style = MaterialTheme.typography.titleLarge,
-                color = TextPrimary, fontWeight = FontWeight.Bold)
+                color = appColors.textPrimary, fontWeight = FontWeight.Bold)
         }
         items(state.portfolios) { p ->
             PortfolioCard(
@@ -112,8 +105,8 @@ private fun PortfolioCard(
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, FortressBorder),
+        color = appColors.surface,
+        border = BorderStroke(1.dp, appColors.border),
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -122,24 +115,24 @@ private fun PortfolioCard(
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(portfolio.name, style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary, fontWeight = FontWeight.Bold)
-                    Text(portfolio.tagline, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                        color = appColors.textPrimary, fontWeight = FontWeight.Bold)
+                    Text(portfolio.tagline, style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(signedPct(portfolio.ytdReturnPct),
                         style = MaterialTheme.typography.titleMedium,
-                        color = if (portfolio.ytdReturnPct >= 0) ProfitGreen else RiskRed,
+                        color = if (portfolio.ytdReturnPct >= 0) appColors.profit else appColors.risk,
                         fontWeight = FontWeight.Bold)
-                    Text("YTD", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                    Text("YTD", style = MaterialTheme.typography.labelMedium, color = appColors.textSecondary)
                 }
             }
             Spacer(Modifier.height(12.dp))
             Sparkline(portfolio.performance, Modifier.fillMaxWidth().height(44.dp))
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.People, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.People, null, tint = appColors.textSecondary, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.size(4.dp))
-                Text("%,d".format(portfolio.followers), style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                Text("%,d".format(portfolio.followers), style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary)
                 Spacer(Modifier.weight(1f))
                 FollowButton(following, busy, onFollow)
             }
@@ -150,24 +143,24 @@ private fun PortfolioCard(
 @Composable
 private fun FollowButton(following: Boolean, busy: Boolean, onClick: () -> Unit) {
     if (busy) {
-        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = FortressBlack)
+        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = appColors.accent)
         return
     }
     if (following) {
         OutlinedButton(
             onClick = onClick,
             shape = RoundedCornerShape(50),
-            border = BorderStroke(1.dp, ProfitGreen)
+            border = BorderStroke(1.dp, appColors.profit)
         ) {
-            Icon(Icons.Filled.Check, null, tint = ProfitGreen, modifier = Modifier.size(16.dp))
+            Icon(Icons.Filled.Check, null, tint = appColors.profit, modifier = Modifier.size(16.dp))
             Spacer(Modifier.size(4.dp))
-            Text("Following", color = ProfitGreen, fontWeight = FontWeight.Bold)
+            Text("Following", color = appColors.profit, fontWeight = FontWeight.Bold)
         }
     } else {
         Button(
             onClick = onClick,
             shape = RoundedCornerShape(50),
-            colors = ButtonDefaults.buttonColors(containerColor = FortressBlack, contentColor = Color.White)
+            colors = ButtonDefaults.buttonColors(containerColor = appColors.accent, contentColor = appColors.onAccent)
         ) { Text("Follow", fontWeight = FontWeight.Bold) }
     }
 }
@@ -181,7 +174,7 @@ private fun PortfolioDetailDialog(
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), color = Color.White) {
+        Surface(shape = RoundedCornerShape(24.dp), color = appColors.surface) {
             var rangeIdx by remember { mutableIntStateOf(3) }
             val ranges = listOf("1M", "3M", "6M", "YTD", "1Y", "ALL")
             val rangeFrac = listOf(0.12f, 0.25f, 0.5f, 0.7f, 1f, 1f)
@@ -195,12 +188,12 @@ private fun PortfolioDetailDialog(
                         Spacer(Modifier.size(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(portfolio.name, style = MaterialTheme.typography.titleLarge,
-                                color = TextPrimary, fontWeight = FontWeight.Bold)
-                            Text("by ${portfolio.managerLabel}", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                                color = appColors.textPrimary, fontWeight = FontWeight.Bold)
+                            Text("by ${portfolio.managerLabel}", style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary)
                         }
                         Text(signedPct(portfolio.ytdReturnPct),
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (portfolio.ytdReturnPct >= 0) ProfitGreen else RiskRed,
+                            color = if (portfolio.ytdReturnPct >= 0) appColors.profit else appColors.risk,
                             fontWeight = FontWeight.Bold)
                     }
                 }
@@ -219,55 +212,55 @@ private fun PortfolioDetailDialog(
                     }
                 }
                 item {
-                    Text(portfolio.description, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Text(portfolio.description, style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary)
                 }
                 if (portfolio.rationale.isNotBlank()) {
                     item {
-                        Surface(shape = RoundedCornerShape(14.dp), color = FortressOffWhite) {
+                        Surface(shape = RoundedCornerShape(14.dp), color = appColors.surfaceAlt) {
                             Column(Modifier.padding(14.dp)) {
-                                Text("🧠 AI rationale", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                                Text("🧠 AI rationale", style = MaterialTheme.typography.labelMedium, color = appColors.textSecondary)
                                 Spacer(Modifier.height(4.dp))
-                                Text(portfolio.rationale, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+                                Text(portfolio.rationale, style = MaterialTheme.typography.bodyMedium, color = appColors.textPrimary)
                             }
                         }
                     }
                 }
                 item {
                     Text("Holdings", style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary, fontWeight = FontWeight.Bold)
+                        color = appColors.textPrimary, fontWeight = FontWeight.Bold)
                 }
                 items(portfolio.holdings) { h ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(h.ticker, style = MaterialTheme.typography.titleMedium,
-                                color = TextPrimary, fontWeight = FontWeight.Bold)
-                            Text(h.name, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                                color = appColors.textPrimary, fontWeight = FontWeight.Bold)
+                            Text(h.name, style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary)
                         }
-                        Text(pct(h.weight), style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                        Text(pct(h.weight), style = MaterialTheme.typography.titleMedium, color = appColors.textPrimary)
                     }
                 }
                 item {
                     if (busy) {
                         Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = FortressBlack)
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = appColors.accent)
                         }
                     } else if (following) {
                         OutlinedButton(
                             onClick = onFollow,
                             modifier = Modifier.fillMaxWidth().height(52.dp).padding(top = 6.dp),
                             shape = RoundedCornerShape(50),
-                            border = BorderStroke(1.dp, ProfitGreen)
+                            border = BorderStroke(1.dp, appColors.profit)
                         ) {
-                            Icon(Icons.Filled.Check, null, tint = ProfitGreen, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Filled.Check, null, tint = appColors.profit, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(6.dp))
-                            Text("Following — Autopilot is matching this", color = ProfitGreen, fontWeight = FontWeight.Bold)
+                            Text("Following — Autopilot is matching this", color = appColors.profit, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Button(
                             onClick = onFollow,
                             modifier = Modifier.fillMaxWidth().height(52.dp).padding(top = 6.dp),
                             shape = RoundedCornerShape(50),
-                            colors = ButtonDefaults.buttonColors(containerColor = FortressBlack, contentColor = Color.White)
+                            colors = ButtonDefaults.buttonColors(containerColor = appColors.accent, contentColor = appColors.onAccent)
                         ) { Text("Follow this portfolio", fontWeight = FontWeight.Bold) }
                     }
                 }
@@ -285,14 +278,14 @@ private fun RangePill(
 ) {
     Surface(
         shape = RoundedCornerShape(50),
-        color = if (selected) FortressBlack else FortressOffWhite,
+        color = if (selected) appColors.accent else appColors.surfaceAlt,
         modifier = modifier.clickable(onClick = onClick)
     ) {
         Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
             Text(
                 label,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (selected) Color.White else TextSecondary,
+                color = if (selected) appColors.onAccent else appColors.textSecondary,
                 fontWeight = FontWeight.Bold
             )
         }

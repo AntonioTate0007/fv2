@@ -35,11 +35,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fortress.app.data.model.ActivityItem
 import com.fortress.app.ui.components.money
-import com.fortress.app.ui.theme.FortressOffWhite
 import com.fortress.app.ui.theme.ProfitGreen
-import com.fortress.app.ui.theme.ProfitGreenSoft
-import com.fortress.app.ui.theme.TextPrimary
-import com.fortress.app.ui.theme.TextSecondary
+import com.fortress.app.ui.theme.appColors
 
 @Composable
 fun ActivityScreen(
@@ -58,12 +55,12 @@ fun ActivityScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Activity", style = MaterialTheme.typography.displayLarge, color = TextPrimary)
+            Text("Activity", style = MaterialTheme.typography.displayLarge, color = appColors.textPrimary)
         }
         if (state.items.isEmpty() && !state.loading) {
             item {
                 Text("No activity yet. When Autopilot trades, it'll show up here.",
-                    style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary)
             }
         }
         items(state.items) { item -> ActivityRow(item) }
@@ -72,9 +69,10 @@ fun ActivityScreen(
 
 @Composable
 private fun ActivityRow(item: ActivityItem) {
-    val (icon, tint, bg) = iconFor(item.type)
+    val (icon, semanticTint) = iconFor(item.type)
+    val tint = semanticTint ?: appColors.textPrimary
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = CircleShape, color = bg, modifier = Modifier.size(40.dp)) {
+        Surface(shape = CircleShape, color = appColors.surfaceAlt, modifier = Modifier.size(40.dp)) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
             }
@@ -82,20 +80,21 @@ private fun ActivityRow(item: ActivityItem) {
         Spacer(Modifier.size(14.dp))
         Column(Modifier.weight(1f)) {
             Text(item.title, style = MaterialTheme.typography.titleMedium,
-                color = TextPrimary, fontWeight = FontWeight.Bold)
-            Text(item.subtitle, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                color = appColors.textPrimary, fontWeight = FontWeight.Bold)
+            Text(item.subtitle, style = MaterialTheme.typography.bodySmall, color = appColors.textSecondary)
         }
         item.amount?.let {
-            Text(money(it), style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+            Text(money(it), style = MaterialTheme.typography.titleMedium, color = appColors.textPrimary)
         }
     }
 }
 
-private data class RowStyle(val icon: ImageVector, val tint: androidx.compose.ui.graphics.Color, val bg: androidx.compose.ui.graphics.Color)
+/** Returns the icon and its semantic tint, or null tint when the row should use the theme's primary text color. */
+private data class RowStyle(val icon: ImageVector, val tint: androidx.compose.ui.graphics.Color?)
 
 private fun iconFor(type: String): RowStyle = when (type) {
-    "TRADE" -> RowStyle(Icons.Filled.TrendingUp, ProfitGreen, ProfitGreenSoft)
-    "REBALANCE" -> RowStyle(Icons.Filled.Sync, TextPrimary, FortressOffWhite)
-    "FOLLOW" -> RowStyle(Icons.Filled.Verified, TextPrimary, FortressOffWhite)
-    else -> RowStyle(Icons.Filled.AutoMode, TextSecondary, FortressOffWhite)
+    "TRADE" -> RowStyle(Icons.Filled.TrendingUp, ProfitGreen)
+    "REBALANCE" -> RowStyle(Icons.Filled.Sync, null)
+    "FOLLOW" -> RowStyle(Icons.Filled.Verified, null)
+    else -> RowStyle(Icons.Filled.AutoMode, null)
 }

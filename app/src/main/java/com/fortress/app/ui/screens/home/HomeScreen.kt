@@ -35,12 +35,7 @@ import com.fortress.app.ui.components.Sparkline
 import com.fortress.app.ui.components.money
 import com.fortress.app.ui.components.signedMoney
 import com.fortress.app.ui.components.signedPct
-import com.fortress.app.ui.theme.FortressBorder
-import com.fortress.app.ui.theme.FortressOffWhite
-import com.fortress.app.ui.theme.ProfitGreen
-import com.fortress.app.ui.theme.RiskRed
-import com.fortress.app.ui.theme.TextPrimary
-import com.fortress.app.ui.theme.TextSecondary
+import com.fortress.app.ui.theme.appColors
 
 @Composable
 fun HomeScreen(
@@ -60,11 +55,11 @@ fun HomeScreen(
     ) {
         item {
             Column {
-                Text("Autopilot", style = MaterialTheme.typography.displayLarge, color = TextPrimary)
+                Text("Autopilot", style = MaterialTheme.typography.displayLarge, color = appColors.textPrimary)
                 Text(
                     state.account?.let { "Robinhood ${it.accountMasked} · auto-investing" }
                         ?: "The modern way to invest",
-                    style = MaterialTheme.typography.bodyMedium, color = TextSecondary
+                    style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary
                 )
             }
         }
@@ -75,18 +70,18 @@ fun HomeScreen(
             item {
                 Surface(
                     shape = RoundedCornerShape(24.dp),
-                    color = FortressOffWhite,
+                    color = appColors.surfaceAlt,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(20.dp)) {
-                        Text("Portfolio value", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-                        Text(money(acct.portfolioValue), style = MaterialTheme.typography.displayLarge, color = TextPrimary)
+                        Text("Portfolio value", style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary)
+                        Text(money(acct.portfolioValue), style = MaterialTheme.typography.displayLarge, color = appColors.textPrimary)
                         Spacer(Modifier.height(4.dp))
                         val up = acct.todayChange >= 0
                         Text(
                             "${signedMoney(acct.todayChange)}  (${signedPct(acct.todayChangePct)}) today",
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (up) ProfitGreen else RiskRed,
+                            color = if (up) appColors.profit else appColors.risk,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(16.dp))
@@ -102,7 +97,7 @@ fun HomeScreen(
 
         item {
             Text("Following", style = MaterialTheme.typography.titleLarge,
-                color = TextPrimary, fontWeight = FontWeight.Bold)
+                color = appColors.textPrimary, fontWeight = FontWeight.Bold)
         }
 
         if (state.followed.isEmpty()) {
@@ -110,7 +105,7 @@ fun HomeScreen(
                 Text(
                     "You're not following any portfolios yet. Head to Discover to pick one — " +
                         "Autopilot will invest your account to match it.",
-                    style = MaterialTheme.typography.bodyMedium, color = TextSecondary
+                    style = MaterialTheme.typography.bodyMedium, color = appColors.textSecondary
                 )
             }
         } else {
@@ -121,7 +116,7 @@ fun HomeScreen(
 
 @Composable
 private fun StatusBanner(killSwitch: Boolean) {
-    val color = if (killSwitch) RiskRed else ProfitGreen
+    val color = if (killSwitch) appColors.risk else appColors.profit
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = color.copy(alpha = 0.10f),
@@ -148,8 +143,8 @@ private fun StatusBanner(killSwitch: Boolean) {
 @Composable
 private fun MiniStat(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
-        Text(value, style = MaterialTheme.typography.titleMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = appColors.textSecondary)
+        Text(value, style = MaterialTheme.typography.titleMedium, color = appColors.textPrimary, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -157,8 +152,8 @@ private fun MiniStat(label: String, value: String, modifier: Modifier = Modifier
 private fun FollowedCard(p: Portfolio) {
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = FortressWhiteCard,
-        border = androidx.compose.foundation.BorderStroke(1.dp, FortressBorder),
+        color = appColors.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, appColors.border),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -166,13 +161,11 @@ private fun FollowedCard(p: Portfolio) {
             Spacer(Modifier.size(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(p.name, style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary, fontWeight = FontWeight.Bold)
+                    color = appColors.textPrimary, fontWeight = FontWeight.Bold)
                 Text("YTD ${signedPct(p.ytdReturnPct)}", style = MaterialTheme.typography.bodySmall,
-                    color = if (p.ytdReturnPct >= 0) ProfitGreen else RiskRed)
+                    color = if (p.ytdReturnPct >= 0) appColors.profit else appColors.risk)
             }
             Sparkline(p.performance, Modifier.size(width = 72.dp, height = 36.dp))
         }
     }
 }
-
-private val FortressWhiteCard = androidx.compose.ui.graphics.Color.White

@@ -17,9 +17,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.fortress.app.ui.theme.FortressOffWhite
 import com.fortress.app.ui.theme.ProfitGreen
 import com.fortress.app.ui.theme.RiskRed
+import com.fortress.app.ui.theme.appColors
 import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
 
@@ -77,7 +77,7 @@ fun PortfolioAvatar(
     emoji: String,
     modifier: Modifier = Modifier,
     size: Dp = 44.dp,
-    background: Color = FortressOffWhite
+    background: Color = appColors.surfaceAlt
 ) {
     Surface(shape = CircleShape, color = background, modifier = modifier.size(size)) {
         Box(contentAlignment = Alignment.Center) {
