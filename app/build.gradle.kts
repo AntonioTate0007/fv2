@@ -52,6 +52,8 @@ android {
         //     api.auth.token=<paste FORTRESS_API_TOKEN value from Render env>
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "API_AUTH_TOKEN", "\"$apiAuthToken\"")
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
     }
 
     buildTypes {

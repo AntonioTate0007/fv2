@@ -107,6 +107,9 @@ class FortressRepository(
         /** Live whenever a Supabase key is baked in (the default for shipped builds). */
         val LIVE: Boolean = SupabaseClient.configured
 
+        /** Back-compat alias for legacy callers (FCM token registration). */
+        val USE_MOCK_DATA: Boolean = !LIVE
+
         /** Shown until the engine writes the first real account snapshot. */
         private val DISCONNECTED = AccountSnapshot(
             accountMasked = "••••9584",
