@@ -1,153 +1,252 @@
 package com.fortress.app.data.repository
 
 import android.content.Context
-import com.fortress.app.BuildConfig
-import com.fortress.app.data.api.ApiClient
-import com.fortress.app.data.api.FortressApiService
+import com.fortress.app.data.api.FollowRow
+import com.fortress.app.data.api.SupabaseClient
+import com.fortress.app.data.api.SupabaseService
 import com.fortress.app.data.gemini.GeminiService
-import com.fortress.app.data.model.ActivePosition
-import com.fortress.app.data.model.CloseRequest
-import com.fortress.app.data.model.CloseResponse
-import com.fortress.app.data.model.DeployRequest
-import com.fortress.app.data.model.DeployResponse
-import com.fortress.app.data.model.RiskOfficerRequest
-import com.fortress.app.data.model.ScannedTrade
-import com.fortress.app.data.model.StrategyType
-import com.fortress.app.data.preferences.AppPreferences
+import com.fortress.app.data.model.AccountSnapshot
+import com.fortress.app.data.model.ActivityItem
+import com.fortress.app.data.model.AutopilotSettings
+import com.fortress.app.data.model.FollowEntry
+import com.fortress.app.data.model.FollowState
+import com.fortress.app.data.model.Portfolio
+import com.fortress.app.data.model.PortfolioHolding
+import com.fortress.app.data.model.PositionLite
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.firstOrNull
-import java.util.UUID
-import kotlin.random.Random
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Single source of truth.
+ * Single source of truth for the app.
  *
- * Priority order for each operation:
- *   1. Gemini (if API key is saved in DataStore)
- *   2. Live backend (if USE_MOCK_DATA = false and backend URL is set)
- *   3. Mock data (default / offline fallback)
+ *   • Live Supabase (PostgREST) when a Supabase key is configured — the catalog,
+ *     follows and settings live there, and the autopilot engine writes the live
+ *     account snapshot + activity feed that Home and Activity read back.
+ *   • Rich mock data otherwise, so the app is still demoable offline.
  */
 class FortressRepository(
     private val context: Context? = null,
-    private val service: FortressApiService = ApiClient.service
+    private val service: SupabaseService = SupabaseClient.service
 ) {
-    private suspend fun gemini(): GeminiService? {
-        val key = context?.let { AppPreferences.geminiKeyFlow(it).firstOrNull() }.orEmpty()
-        return if (key.isNotBlank()) GeminiService(key) else null
+    // ── Catalog ───────────────────────────────────────────────────────────────
+
+    suspend fun portfolios(): List<Portfolio> {
+        if (!LIVE) { delay(200); return MockData.portfolios }
+        return service.portfolios()
     }
 
-    // ── Radar ─────────────────────────────────────────────────────────────────
+    suspend fun portfolio(id: String): Portfolio {
+        if (!LIVE) { delay(120); return MockData.portfolios.first { it.id == id } }
+        return service.portfolioById("eq.$id").first()
+    }
 
-    suspend fun scan(capitalDeployment: Int): List<ScannedTrade> {
-        gemini()?.let { g ->
-            val trades = runCatching { g.scanForPlays(capitalDeployment) }.getOrNull()
-            if (!trades.isNullOrEmpty()) return trades
+    suspend fun refreshPortfolio(id: String): Portfolio = portfolio(id)
+
+    // ── Account + activity (engine-written) ─────────────────────────────────────
+
+    suspend fun account(): AccountSnapshot {
+        if (!LIVE) { delay(150); return MockData.account }
+        return service.account().firstOrNull() ?: DISCONNECTED
+    }
+
+    suspend fun activity(limit: Int = 50): List<ActivityItem> {
+        if (!LIVE) { delay(150); return MockData.activity }
+        return service.activity(limit = limit)
+    }
+
+    // ── Follows ─────────────────────────────────────────────────────────────────
+
+    suspend fun follows(): FollowState {
+        if (!LIVE) return FollowState(MockData.follows.toMap())
+        return FollowState(service.follows().associate {
+            it.portfolioId to FollowEntry(it.allocationPct, it.followedAt)
+        })
+    }
+
+    suspend fun follow(portfolioId: String, following: Boolean, allocationPct: Double? = null): FollowState {
+        if (!LIVE) {
+            if (following) {
+                MockData.follows[portfolioId] = FollowEntry(allocationPct ?: 1.0, System.currentTimeMillis() / 1000.0)
+            } else {
+                MockData.follows.remove(portfolioId)
+            }
+            return FollowState(MockData.follows.toMap())
         }
-        if (!USE_MOCK_DATA) return service.scan(capitalDeployment)
-        delay(350)
-        return MockData.scan(capitalDeployment)
-    }
-
-    suspend fun deploy(
-        tradeId: String,
-        capital: Int,
-        biometricToken: String,
-        trade: ScannedTrade? = null
-    ): DeployResponse {
-        if (USE_MOCK_DATA) { delay(700); return DeployResponse(true, "MOCK-${UUID.randomUUID()}") }
-        return service.deploy(DeployRequest(tradeId, capital, biometricToken, trade))
-    }
-
-    // ── Armory ────────────────────────────────────────────────────────────────
-
-    suspend fun positions(): List<ActivePosition> {
-        if (USE_MOCK_DATA) { delay(250); return MockData.positions() }
-        return service.positions()
-    }
-
-    suspend fun closePosition(positionId: String, biometricToken: String): CloseResponse {
-        if (USE_MOCK_DATA) { delay(500); return CloseResponse(true, "Position closed at market.") }
-        return service.closePosition(CloseRequest(positionId, biometricToken))
-    }
-
-    // ── Risk Officer ──────────────────────────────────────────────────────────
-
-    suspend fun askRiskOfficer(
-        prompt: String,
-        capitalContext: Int?,
-        imageBase64: String? = null,
-        history: List<Pair<String, String>> = emptyList()
-    ): String {
-        gemini()?.let { g ->
-            return runCatching {
-                g.askRiskOfficer(prompt, history, imageBase64)
-            }.getOrElse { "Gemini error: ${it.message}" }
+        if (following) {
+            service.upsertFollow(
+                FollowRow(
+                    portfolioId = portfolioId,
+                    allocationPct = allocationPct ?: 1.0,
+                    followedAt = System.currentTimeMillis() / 1000.0
+                )
+            )
+        } else {
+            service.deleteFollow("eq.$portfolioId")
         }
-        if (!USE_MOCK_DATA) {
-            return service.askRiskOfficer(RiskOfficerRequest(prompt, capitalContext, imageBase64)).reply
-        }
-        delay(900)
-        return MockData.officerReply(prompt, capitalContext, hasImage = imageBase64 != null)
+        return follows()
     }
 
-    // ── Settings ──────────────────────────────────────────────────────────────
+    // ── Settings ─────────────────────────────────────────────────────────────────
+
+    suspend fun settings(): AutopilotSettings {
+        if (!LIVE) return MockData.settings
+        return service.settings().firstOrNull() ?: AutopilotSettings(account = "••••9584")
+    }
+
+    suspend fun updateSettings(settings: AutopilotSettings): AutopilotSettings {
+        if (!LIVE) { MockData.settings = settings; return settings }
+        return service.updateSettings(settings = settings).firstOrNull() ?: settings
+    }
+
+    // ── Gemini key check ──────────────────────────────────────────────────────
 
     suspend fun testGeminiKey(key: String): Boolean =
         runCatching { GeminiService(key).testConnection() }.getOrDefault(false)
 
     companion object {
-        // Auto-on whenever the build is pointed at the placeholder URL. Drop a real backend
-        // URL into app/build.gradle.kts (API_BASE_URL) and this flips to live calls.
-        val USE_MOCK_DATA: Boolean =
-            BuildConfig.API_BASE_URL.isBlank() ||
-            BuildConfig.API_BASE_URL.contains("example.com", ignoreCase = true)
+        /** Live whenever a Supabase key is baked in (the default for shipped builds). */
+        val LIVE: Boolean = SupabaseClient.configured
+
+        /** Back-compat alias for legacy callers (FCM token registration). */
+        val USE_MOCK_DATA: Boolean = !LIVE
+
+        /** Shown until the engine writes the first real account snapshot. */
+        private val DISCONNECTED = AccountSnapshot(
+            accountMasked = "••••9584",
+            portfolioValue = 0.0,
+            buyingPower = 0.0,
+            todayChange = 0.0,
+            todayChangePct = 0.0,
+            deployed = 0.0,
+            positions = emptyList(),
+            updatedAt = 0.0,
+            connected = false
+        )
     }
 }
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
+// ── Mock data (offline fallback only) ─────────────────────────────────────────────
 
 private object MockData {
-    fun scan(capital: Int): List<ScannedTrade> {
-        val _unused = capital
-        fun jitterCredit(base: Double) = (base + Random.nextDouble(-0.05, 0.05)).coerceIn(0.35, 0.80)
-        fun jitterIv(base: Double) = (base + Random.nextDouble(-0.04, 0.04)).coerceIn(0.10, 0.99)
-        return listOf(
-            ScannedTrade("AAPL-PCS-265", "AAPL", StrategyType.PUT_CREDIT_SPREAD,
-                265.0, 260.0, "2026-05-15", 10, jitterCredit(0.78), 0.082, 288.42, 0.86, jitterIv(0.68), true),
-            ScannedTrade("MSFT-PCS-410", "MSFT", StrategyType.PUT_CREDIT_SPREAD,
-                410.0, 400.0, "2026-05-15", 10, jitterCredit(0.67), 0.067, 439.10, 0.82, jitterIv(0.74), true),
-            ScannedTrade("NVDA-CSP-115", "NVDA", StrategyType.CASH_SECURED_PUT,
-                115.0, 115.0, "2026-05-22", 14, jitterCredit(0.54), 0.094, 127.05, 0.79, jitterIv(0.81), true),
-            ScannedTrade("GOOGL-PCS-180", "GOOGL", StrategyType.PUT_CREDIT_SPREAD,
-                180.0, 175.0, "2026-05-15", 10, jitterCredit(0.62), 0.071, 193.78, 0.84, jitterIv(0.59), true),
-            ScannedTrade("AMZN-PCS-200", "AMZN", StrategyType.PUT_CREDIT_SPREAD,
-                200.0, 195.0, "2026-05-22", 14, jitterCredit(0.71), 0.058, 212.34, 0.81, jitterIv(0.63), true)
-        )
+
+    val follows = ConcurrentHashMap<String, FollowEntry>().apply {
+        put("ai-flagship", FollowEntry(allocationPct = 1.0, followedAt = 0.0))
     }
 
-    fun positions(): List<ActivePosition> = listOf(
-        ActivePosition("POS-AAPL-1", "AAPL", "$265 / $260 Put Spread",
-            265.0, 286.10, 78.0, 38.0, "2026-05-15", 4),
-        ActivePosition("POS-MSFT-1", "MSFT", "$410 / $400 Put Spread",
-            410.0, 432.55, 134.0, 71.0, "2026-05-15", 2),
-        ActivePosition("POS-NVDA-1", "NVDA", "$115 Cash-Secured Put",
-            115.0, 124.60, 108.0, 61.0, "2026-05-22", 1)
+    var settings = AutopilotSettings(
+        killSwitch = false,
+        allocatedCapital = 500.0,
+        maxPositionPct = 0.25,
+        driftThresholdPct = 0.03,
+        rebalanceCadence = "daily",
+        account = "••••9584"
     )
 
-    fun officerReply(prompt: String, capital: Int?, hasImage: Boolean): String = buildString {
-        val cap = capital?.let { "$$it" } ?: "the configured capital block"
-        if (hasImage) {
-            append("📸 Screenshot received — analyzing the options chain...\n\n")
-            append("I can see a spread setup in the image. Here's my read:\n")
-            append("• Short strike appears ~7% below current price — within Moat spec.\n")
-            append("• Bid/ask spread looks tight; liquidity should be fine.\n")
-            append("• No earnings flag visible. Green light.\n\n")
-        }
-        append("Analysis of \"$prompt\" against $cap:\n")
-        append("• IV rank is elevated — premium is fat. Good time to sell.\n")
-        append("• 8.2% safety buffer keeps the short strike well below support.\n")
-        append("• 50% profit-take trigger is armed.\n")
-        append("• Recommend no more than the suggested capital block.\n\n")
-        append("_(Add your Gemini API key in Settings to get live AI analysis.)_")
+    private fun curve(start: Double, vararg deltas: Double): List<Double> {
+        val out = mutableListOf(start)
+        var v = start
+        for (d in deltas) { v *= (1 + d); out.add(v) }
+        return out
     }
+
+    val portfolios: List<Portfolio> = listOf(
+        Portfolio(
+            id = "ai-flagship",
+            name = "AI Flagship Fund",
+            tagline = "Gemini-picked mega-cap growth",
+            description = "A concentrated basket of high-quality mega-cap equities and broad-market " +
+                "ETFs, re-weighted by an AI model that reads momentum and market breadth. Autopilot " +
+                "keeps your Robinhood account matched to these target weights.",
+            category = "AI",
+            managerLabel = "Autopilot AI",
+            iconEmoji = "🧠",
+            ytdReturnPct = 0.431,
+            followers = 248_512,
+            holdings = listOf(
+                PortfolioHolding("NVDA", "NVIDIA", 0.22),
+                PortfolioHolding("MSFT", "Microsoft", 0.18),
+                PortfolioHolding("AAPL", "Apple", 0.16),
+                PortfolioHolding("AMZN", "Amazon", 0.14),
+                PortfolioHolding("GOOGL", "Alphabet", 0.12),
+                PortfolioHolding("SPY", "S&P 500 ETF", 0.10),
+                PortfolioHolding("QQQ", "Nasdaq-100 ETF", 0.08),
+            ),
+            performance = curve(100.0, .03, .02, -.01, .04, .03, -.02, .05, .04, .02, .06),
+            rationale = "Risk-on tape with broad participation. Overweight NVDA and MSFT on " +
+                "AI-capex momentum; ETF sleeve dampens single-name drawdowns."
+        ),
+        Portfolio(
+            id = "index-core",
+            name = "Index Core",
+            tagline = "Set-and-forget broad market",
+            description = "A simple, low-turnover core of broad-market and Nasdaq ETFs. The calm " +
+                "anchor of a portfolio.",
+            category = "Index",
+            managerLabel = "Autopilot",
+            iconEmoji = "📈",
+            ytdReturnPct = 0.182,
+            followers = 511_204,
+            holdings = listOf(
+                PortfolioHolding("SPY", "S&P 500 ETF", 0.50),
+                PortfolioHolding("QQQ", "Nasdaq-100 ETF", 0.30),
+                PortfolioHolding("VTI", "Total Market ETF", 0.20),
+            ),
+            performance = curve(100.0, .01, .02, .01, .015, -.005, .02, .01, .012, .008, .015),
+            rationale = "Diversified beta. Rebalances rarely; lowest cost, lowest drama."
+        ),
+        Portfolio(
+            id = "magnificent-seven",
+            name = "Magnificent Seven",
+            tagline = "The mega-cap tech leaders",
+            description = "Equal-conviction exposure to the seven mega-cap names that drive the " +
+                "index. Higher volatility, higher beta.",
+            category = "Thematic",
+            managerLabel = "Autopilot",
+            iconEmoji = "🚀",
+            ytdReturnPct = 0.367,
+            followers = 132_880,
+            holdings = listOf(
+                PortfolioHolding("AAPL", "Apple", 0.15),
+                PortfolioHolding("MSFT", "Microsoft", 0.15),
+                PortfolioHolding("NVDA", "NVIDIA", 0.15),
+                PortfolioHolding("AMZN", "Amazon", 0.14),
+                PortfolioHolding("GOOGL", "Alphabet", 0.14),
+                PortfolioHolding("META", "Meta", 0.14),
+                PortfolioHolding("TSLA", "Tesla", 0.13),
+            ),
+            performance = curve(100.0, .04, -.02, .05, .03, -.03, .06, .02, .04, -.01, .05),
+            rationale = "Concentrated leadership trade. Sized equally to avoid single-name dominance."
+        ),
+    )
+
+    val account = AccountSnapshot(
+        accountMasked = "••••9584",
+        portfolioValue = 512.74,
+        buyingPower = 38.10,
+        todayChange = 6.42,
+        todayChangePct = 0.0127,
+        deployed = 474.64,
+        connected = true,
+        positions = listOf(
+            PositionLite("NVDA", 0.71, 104.30, 138.0, 0.061),
+            PositionLite("MSFT", 0.19, 85.40, 432.0, 0.041),
+            PositionLite("AAPL", 0.27, 76.20, 268.0, -0.012),
+            PositionLite("AMZN", 0.31, 66.50, 205.0, 0.028),
+            PositionLite("GOOGL", 0.30, 57.10, 188.0, 0.034),
+            PositionLite("SPY", 0.08, 47.85, 598.0, 0.015),
+            PositionLite("QQQ", 0.07, 36.50, 521.0, 0.019),
+        ),
+        updatedAt = 0.0
+    )
+
+    val activity = listOf(
+        ActivityItem("a1", 0.0, "TRADE", "Your trades are complete",
+            "Autopilot bought 7 positions to match AI Flagship Fund", amount = 474.64),
+        ActivityItem("a2", 0.0, "REBALANCE", "Portfolio rebalanced",
+            "Trimmed AAPL, added NVDA to track target weights", ticker = "NVDA"),
+        ActivityItem("a3", 0.0, "TRADE", "Bought NVDA", "0.71 shares @ \$138.00", ticker = "NVDA", amount = 104.30),
+        ActivityItem("a4", 0.0, "FOLLOW", "Started following", "AI Flagship Fund — 100% allocation"),
+        ActivityItem("a5", 0.0, "SYSTEM", "Autopilot engaged",
+            "Connected to Robinhood ••••9584 (cash). Equities only."),
+    )
 }

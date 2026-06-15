@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Fortress</string>
+    <string name="app_name">Autopilot</string>
 
     <!-- Biometric prompt -->
-    <string name="biometric_title">Authorize Trade Execution</string>
-    <string name="biometric_subtitle">The Fortress requires biometric confirmation</string>
+    <string name="biometric_title">Authorize Autopilot</string>
+    <string name="biometric_subtitle">Confirm it\'s you to change autopilot settings</string>
     <string name="biometric_negative">Cancel</string>
 
-    <!-- Notification channels -->
-    <string name="channel_profit_alerts">Profit Alerts</string>
-    <string name="channel_profit_alerts_desc">Notifies you when an open position hits the 50% profit target</string>
-    <string name="action_close_position">CLOSE POSITION</string>
+    <!-- Notification channel -->
+    <string name="channel_profit_alerts">Trade Alerts</string>
+    <string name="channel_profit_alerts_desc">Notifies you when Autopilot places trades in your brokerage</string>
+    <string name="action_view_activity">VIEW ACTIVITY</string>
 </resources>

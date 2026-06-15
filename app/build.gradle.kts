@@ -16,6 +16,14 @@ val localProps = Properties().apply {
 val apiBaseUrl: String = localProps.getProperty("api.base.url", "https://fortress-api.example.com/")
 val apiAuthToken: String = localProps.getProperty("api.auth.token", "")
 
+// Supabase is the app's live backend (shared state written by the autopilot engine).
+// The publishable anon key is safe to embed in the APK; RLS guards what it can touch.
+val supabaseUrl: String = localProps.getProperty("supabase.url", "https://jeonlqduborydqiyhaey.supabase.co")
+val supabaseKey: String = localProps.getProperty(
+    "supabase.key",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Implb25scWR1Ym9yeWRxaXloYWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0OTMwMjgsImV4cCI6MjA5NzA2OTAyOH0.I1v0HUvPyisV26kTuZLnFAnWacMF5aJCvYkXACBgqYM"
+)
+
 // Firebase auto-wiring: drop google-services.json into /app and the plugin lights up
 // on next build — no manifest or gradle changes needed.
 if (file("google-services.json").exists()) {
@@ -30,11 +38,13 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.fortress.app"
+        // Distinct id so the app installs cleanly alongside any older
+        // com.fortress.app build (avoids debug-signature install conflicts).
+        applicationId = "com.autopilot.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "7.0"
+        versionCode = 8
+        versionName = "8.0"
 
         // Backend URL + bearer come from local.properties (kept out of git).
         // To go live: drop these two lines into local.properties:
@@ -42,6 +52,8 @@ android {
         //     api.auth.token=<paste FORTRESS_API_TOKEN value from Render env>
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "API_AUTH_TOKEN", "\"$apiAuthToken\"")
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"$supabaseKey\"")
     }
 
     buildTypes {

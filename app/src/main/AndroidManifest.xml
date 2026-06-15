@@ -29,7 +29,7 @@
         </activity>
 
         <!-- Firebase Cloud Messaging service: dispatches push notifications
-             from the backend (e.g. when a position hits the 50% profit target). -->
+             from the backend when Autopilot places trades. -->
         <service
             android:name=".notification.FortressFirebaseMessagingService"
             android:exported="false">
@@ -37,11 +37,6 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
-
-        <!-- Lock-screen "CLOSE POSITION" action target. -->
-        <receiver
-            android:name=".notification.CloseTradeReceiver"
-            android:exported="false" />
 
     </application>
 
