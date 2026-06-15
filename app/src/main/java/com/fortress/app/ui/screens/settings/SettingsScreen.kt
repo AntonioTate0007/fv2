@@ -51,7 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fortress.app.ui.components.money
 import com.fortress.app.ui.components.pct
-import com.fortress.app.ui.theme.AutopilotBlue
+import com.fortress.app.ui.theme.FortressBlack
 import com.fortress.app.ui.theme.FortressBorder
 import com.fortress.app.ui.theme.FortressOffWhite
 import com.fortress.app.ui.theme.ProfitGreen
@@ -164,12 +164,12 @@ fun SettingsScreen(
                     },
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AutopilotBlue,
+                        focusedBorderColor = FortressBlack,
                         unfocusedBorderColor = FortressBorder,
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
-                        focusedLabelColor = AutopilotBlue,
-                        cursorColor = AutopilotBlue
+                        focusedLabelColor = FortressBlack,
+                        cursorColor = FortressBlack
                     )
                 )
                 Spacer(Modifier.height(12.dp))
@@ -179,7 +179,7 @@ fun SettingsScreen(
                         enabled = state.draftKey.isNotBlank() && state.keyStatus != SettingsViewModel.KeyStatus.TESTING,
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AutopilotBlue, contentColor = Color.White)
+                        colors = ButtonDefaults.buttonColors(containerColor = FortressBlack, contentColor = Color.White)
                     ) {
                         if (state.keyStatus == SettingsViewModel.KeyStatus.TESTING) {
                             CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
@@ -233,8 +233,8 @@ private fun SliderRow(label: String, value: String, fraction: Float, onChange: (
             value = fraction,
             onValueChange = { onChange(it.toDouble()) },
             colors = SliderDefaults.colors(
-                thumbColor = AutopilotBlue,
-                activeTrackColor = AutopilotBlue
+                thumbColor = FortressBlack,
+                activeTrackColor = FortressBlack
             )
         )
     }

@@ -35,8 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fortress.app.data.model.ActivityItem
 import com.fortress.app.ui.components.money
-import com.fortress.app.ui.theme.AutopilotBlue
-import com.fortress.app.ui.theme.AutopilotBlueSoft
+import com.fortress.app.ui.theme.FortressOffWhite
 import com.fortress.app.ui.theme.ProfitGreen
 import com.fortress.app.ui.theme.ProfitGreenSoft
 import com.fortress.app.ui.theme.TextPrimary
@@ -96,7 +95,7 @@ private data class RowStyle(val icon: ImageVector, val tint: androidx.compose.ui
 
 private fun iconFor(type: String): RowStyle = when (type) {
     "TRADE" -> RowStyle(Icons.Filled.TrendingUp, ProfitGreen, ProfitGreenSoft)
-    "REBALANCE" -> RowStyle(Icons.Filled.Sync, AutopilotBlue, AutopilotBlueSoft)
-    "FOLLOW" -> RowStyle(Icons.Filled.Verified, AutopilotBlue, AutopilotBlueSoft)
-    else -> RowStyle(Icons.Filled.AutoMode, TextSecondary, AutopilotBlueSoft)
+    "REBALANCE" -> RowStyle(Icons.Filled.Sync, TextPrimary, FortressOffWhite)
+    "FOLLOW" -> RowStyle(Icons.Filled.Verified, TextPrimary, FortressOffWhite)
+    else -> RowStyle(Icons.Filled.AutoMode, TextSecondary, FortressOffWhite)
 }

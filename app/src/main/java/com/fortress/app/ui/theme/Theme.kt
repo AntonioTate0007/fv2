@@ -5,7 +5,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
 private val AutopilotLightColors = lightColorScheme(
-    primary = AutopilotBlue,
+    primary = FortressBlack,
     onPrimary = FortressWhite,
     secondary = ProfitGreen,
     onSecondary = FortressWhite,

@@ -30,6 +30,9 @@ import androidx.compose.material.icons.filled.People
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -39,10 +42,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fortress.app.data.model.Portfolio
+import com.fortress.app.ui.components.PortfolioAvatar
 import com.fortress.app.ui.components.Sparkline
 import com.fortress.app.ui.components.pct
 import com.fortress.app.ui.components.signedPct
-import com.fortress.app.ui.theme.AutopilotBlue
+import com.fortress.app.ui.theme.FortressBlack
 import com.fortress.app.ui.theme.FortressBorder
 import com.fortress.app.ui.theme.FortressOffWhite
 import com.fortress.app.ui.theme.ProfitGreen
@@ -114,7 +118,7 @@ private fun PortfolioCard(
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(portfolio.iconEmoji, style = MaterialTheme.typography.headlineMedium)
+                PortfolioAvatar(portfolio.iconEmoji, size = 46.dp)
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(portfolio.name, style = MaterialTheme.typography.titleMedium,
@@ -146,7 +150,7 @@ private fun PortfolioCard(
 @Composable
 private fun FollowButton(following: Boolean, busy: Boolean, onClick: () -> Unit) {
     if (busy) {
-        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = AutopilotBlue)
+        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = FortressBlack)
         return
     }
     if (following) {
@@ -163,7 +167,7 @@ private fun FollowButton(following: Boolean, busy: Boolean, onClick: () -> Unit)
         Button(
             onClick = onClick,
             shape = RoundedCornerShape(50),
-            colors = ButtonDefaults.buttonColors(containerColor = AutopilotBlue, contentColor = Color.White)
+            colors = ButtonDefaults.buttonColors(containerColor = FortressBlack, contentColor = Color.White)
         ) { Text("Follow", fontWeight = FontWeight.Bold) }
     }
 }
@@ -178,22 +182,42 @@ private fun PortfolioDetailDialog(
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(24.dp), color = Color.White) {
+            var rangeIdx by remember { mutableIntStateOf(3) }
+            val ranges = listOf("1M", "3M", "6M", "YTD", "1Y", "ALL")
+            val rangeFrac = listOf(0.12f, 0.25f, 0.5f, 0.7f, 1f, 1f)
             LazyColumn(
                 Modifier.fillMaxWidth().padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(portfolio.iconEmoji, style = MaterialTheme.typography.displaySmall)
+                        PortfolioAvatar(portfolio.iconEmoji, size = 52.dp)
                         Spacer(Modifier.size(12.dp))
-                        Column {
+                        Column(Modifier.weight(1f)) {
                             Text(portfolio.name, style = MaterialTheme.typography.titleLarge,
                                 color = TextPrimary, fontWeight = FontWeight.Bold)
                             Text("by ${portfolio.managerLabel}", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
                         }
+                        Text(signedPct(portfolio.ytdReturnPct),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (portfolio.ytdReturnPct >= 0) ProfitGreen else RiskRed,
+                            fontWeight = FontWeight.Bold)
                     }
                 }
-                item { Sparkline(portfolio.performance, Modifier.fillMaxWidth().height(80.dp)) }
+                item {
+                    val n = (portfolio.performance.size * rangeFrac[rangeIdx]).toInt().coerceAtLeast(2)
+                    Sparkline(portfolio.performance.takeLast(n), Modifier.fillMaxWidth().height(90.dp))
+                }
+                item {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        ranges.forEachIndexed { i, label ->
+                            RangePill(label, selected = i == rangeIdx, modifier = Modifier.weight(1f)) { rangeIdx = i }
+                        }
+                    }
+                }
                 item {
                     Text(portfolio.description, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
                 }
@@ -223,11 +247,54 @@ private fun PortfolioDetailDialog(
                     }
                 }
                 item {
-                    Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
-                        FollowButton(following, busy, onFollow)
+                    if (busy) {
+                        Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = FortressBlack)
+                        }
+                    } else if (following) {
+                        OutlinedButton(
+                            onClick = onFollow,
+                            modifier = Modifier.fillMaxWidth().height(52.dp).padding(top = 6.dp),
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.dp, ProfitGreen)
+                        ) {
+                            Icon(Icons.Filled.Check, null, tint = ProfitGreen, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("Following — Autopilot is matching this", color = ProfitGreen, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = onFollow,
+                            modifier = Modifier.fillMaxWidth().height(52.dp).padding(top = 6.dp),
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(containerColor = FortressBlack, contentColor = Color.White)
+                        ) { Text("Follow this portfolio", fontWeight = FontWeight.Bold) }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RangePill(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (selected) FortressBlack else FortressOffWhite,
+        modifier = modifier.clickable(onClick = onClick)
+    ) {
+        Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selected) Color.White else TextSecondary,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

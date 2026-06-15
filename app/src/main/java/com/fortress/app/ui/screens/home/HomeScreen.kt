@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fortress.app.data.model.Portfolio
+import com.fortress.app.ui.components.PortfolioAvatar
 import com.fortress.app.ui.components.Sparkline
 import com.fortress.app.ui.components.money
 import com.fortress.app.ui.components.signedMoney
@@ -161,7 +162,7 @@ private fun FollowedCard(p: Portfolio) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(p.iconEmoji, style = MaterialTheme.typography.headlineMedium)
+            PortfolioAvatar(p.iconEmoji, size = 44.dp)
             Spacer(Modifier.size(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(p.name, style = MaterialTheme.typography.titleMedium,
