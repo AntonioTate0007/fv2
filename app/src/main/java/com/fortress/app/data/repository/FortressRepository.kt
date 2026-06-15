@@ -1,15 +1,14 @@
 package com.fortress.app.data.repository
 
 import android.content.Context
-import com.fortress.app.BuildConfig
-import com.fortress.app.data.api.ApiClient
-import com.fortress.app.data.api.FortressApiService
+import com.fortress.app.data.api.FollowRow
+import com.fortress.app.data.api.SupabaseClient
+import com.fortress.app.data.api.SupabaseService
 import com.fortress.app.data.gemini.GeminiService
 import com.fortress.app.data.model.AccountSnapshot
 import com.fortress.app.data.model.ActivityItem
 import com.fortress.app.data.model.AutopilotSettings
 import com.fortress.app.data.model.FollowEntry
-import com.fortress.app.data.model.FollowRequest
 import com.fortress.app.data.model.FollowState
 import com.fortress.app.data.model.Portfolio
 import com.fortress.app.data.model.PortfolioHolding
@@ -20,70 +19,83 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Single source of truth for the app.
  *
- *   • Live backend when API_BASE_URL points at a real server.
- *   • Rich mock data otherwise, so the app is fully demoable offline.
+ *   • Live Supabase (PostgREST) when a Supabase key is configured — the catalog,
+ *     follows and settings live there, and the autopilot engine writes the live
+ *     account snapshot + activity feed that Home and Activity read back.
+ *   • Rich mock data otherwise, so the app is still demoable offline.
  */
 class FortressRepository(
     private val context: Context? = null,
-    private val service: FortressApiService = ApiClient.service
+    private val service: SupabaseService = SupabaseClient.service
 ) {
     // ── Catalog ───────────────────────────────────────────────────────────────
 
     suspend fun portfolios(): List<Portfolio> {
-        if (!USE_MOCK_DATA) return service.portfolios()
-        delay(250); return MockData.portfolios
+        if (!LIVE) { delay(200); return MockData.portfolios }
+        return service.portfolios()
     }
 
     suspend fun portfolio(id: String): Portfolio {
-        if (!USE_MOCK_DATA) return service.portfolio(id)
-        delay(150); return MockData.portfolios.first { it.id == id }
+        if (!LIVE) { delay(120); return MockData.portfolios.first { it.id == id } }
+        return service.portfolioById("eq.$id").first()
     }
 
-    suspend fun refreshPortfolio(id: String): Portfolio {
-        if (!USE_MOCK_DATA) return service.refreshPortfolio(id)
-        delay(600); return MockData.portfolios.first { it.id == id }
-    }
+    suspend fun refreshPortfolio(id: String): Portfolio = portfolio(id)
 
     // ── Account + activity (engine-written) ─────────────────────────────────────
 
     suspend fun account(): AccountSnapshot {
-        if (!USE_MOCK_DATA) return service.account()
-        delay(200); return MockData.account
+        if (!LIVE) { delay(150); return MockData.account }
+        return service.account().firstOrNull() ?: DISCONNECTED
     }
 
     suspend fun activity(limit: Int = 50): List<ActivityItem> {
-        if (!USE_MOCK_DATA) return service.activity(limit)
-        delay(200); return MockData.activity
+        if (!LIVE) { delay(150); return MockData.activity }
+        return service.activity(limit = limit)
     }
 
     // ── Follows ─────────────────────────────────────────────────────────────────
 
     suspend fun follows(): FollowState {
-        if (!USE_MOCK_DATA) return service.follows()
-        return FollowState(MockData.follows.toMap())
+        if (!LIVE) return FollowState(MockData.follows.toMap())
+        return FollowState(service.follows().associate {
+            it.portfolioId to FollowEntry(it.allocationPct, it.followedAt)
+        })
     }
 
     suspend fun follow(portfolioId: String, following: Boolean, allocationPct: Double? = null): FollowState {
-        if (!USE_MOCK_DATA) return service.follow(FollowRequest(portfolioId, following, allocationPct))
-        if (following) {
-            MockData.follows[portfolioId] = FollowEntry(allocationPct ?: 1.0, System.currentTimeMillis() / 1000.0)
-        } else {
-            MockData.follows.remove(portfolioId)
+        if (!LIVE) {
+            if (following) {
+                MockData.follows[portfolioId] = FollowEntry(allocationPct ?: 1.0, System.currentTimeMillis() / 1000.0)
+            } else {
+                MockData.follows.remove(portfolioId)
+            }
+            return FollowState(MockData.follows.toMap())
         }
-        return FollowState(MockData.follows.toMap())
+        if (following) {
+            service.upsertFollow(
+                FollowRow(
+                    portfolioId = portfolioId,
+                    allocationPct = allocationPct ?: 1.0,
+                    followedAt = System.currentTimeMillis() / 1000.0
+                )
+            )
+        } else {
+            service.deleteFollow("eq.$portfolioId")
+        }
+        return follows()
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────────
 
     suspend fun settings(): AutopilotSettings {
-        if (!USE_MOCK_DATA) return service.settings()
-        return MockData.settings
+        if (!LIVE) return MockData.settings
+        return service.settings().firstOrNull() ?: AutopilotSettings(account = "••••9584")
     }
 
     suspend fun updateSettings(settings: AutopilotSettings): AutopilotSettings {
-        if (!USE_MOCK_DATA) return service.updateSettings(settings)
-        MockData.settings = settings
-        return settings
+        if (!LIVE) { MockData.settings = settings; return settings }
+        return service.updateSettings(settings = settings).firstOrNull() ?: settings
     }
 
     // ── Gemini key check ──────────────────────────────────────────────────────
@@ -92,14 +104,25 @@ class FortressRepository(
         runCatching { GeminiService(key).testConnection() }.getOrDefault(false)
 
     companion object {
-        // Mock mode unless a real backend URL is set in local.properties.
-        val USE_MOCK_DATA: Boolean =
-            BuildConfig.API_BASE_URL.isBlank() ||
-            BuildConfig.API_BASE_URL.contains("example.com", ignoreCase = true)
+        /** Live whenever a Supabase key is baked in (the default for shipped builds). */
+        val LIVE: Boolean = SupabaseClient.configured
+
+        /** Shown until the engine writes the first real account snapshot. */
+        private val DISCONNECTED = AccountSnapshot(
+            accountMasked = "••••9584",
+            portfolioValue = 0.0,
+            buyingPower = 0.0,
+            todayChange = 0.0,
+            todayChangePct = 0.0,
+            deployed = 0.0,
+            positions = emptyList(),
+            updatedAt = 0.0,
+            connected = false
+        )
     }
 }
 
-// ── Mock data ───────────────────────────────────────────────────────────────────
+// ── Mock data (offline fallback only) ─────────────────────────────────────────────
 
 private object MockData {
 
