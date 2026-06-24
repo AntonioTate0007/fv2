@@ -1,8 +1,12 @@
 name: Deploy Fortress Web App
 
+# Pages can only deploy after the repo owner enables it once:
+#   Settings → Pages → Source → "GitHub Actions".
+# Until then this workflow will fail, so it is scoped to main + manual runs
+# to avoid red checks on feature-branch PRs.
 on:
   push:
-    branches: [ "main", "claude/new-session-scah26" ]
+    branches: [ "main" ]
     paths: [ "web/**", ".github/workflows/deploy-web.yml" ]
   workflow_dispatch:
 
