@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns the in-app theme; this base theme renders the system UI
+         (status bar, splash) in the dark Fortress palette before Compose mounts. -->
+    <style name="Theme.FortressTrader" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/status_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/status_bar</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

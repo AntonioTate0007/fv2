@@ -1,0 +1,47 @@
+name: Build Fortress Trader APK
+
+on:
+  push:
+    branches: [ "main", "claude/new-session-scah26" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-trader-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" >/dev/null || true
+
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :trader:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fortress-trader-debug-apk
+          path: trader/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
