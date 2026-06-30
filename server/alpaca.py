@@ -22,7 +22,9 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 import time
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -61,11 +63,39 @@ MIN_OTM_BUFFER = 0.05   # short strike must be ≥5% below spot for puts
 SPREAD_WIDTH = 5.0      # default $5 wide for credit spreads
 
 
+# ── Request-scoped overrides ────────────────────────────────────────────────────
+#
+# When a request supplies X-Alpaca-Key / X-Alpaca-Secret / X-Alpaca-Paper headers,
+# the FastAPI dependency stuffs them into this contextvar for the lifetime of the
+# request. _api_key() / _api_secret() / is_live() check it first, falling back to
+# the runtime override and then to env vars. This lets the companion forward the
+# operator's keys per-request without ever touching the host's env config.
+
+_REQUEST_CREDS: ContextVar["tuple[str | None, str | None, bool | None] | None"] = \
+    ContextVar("alpaca_request_creds", default=None)
+
+
+def set_request_creds(key: str | None, secret: str | None, paper: bool | None) -> None:
+    """Set Alpaca creds for the current request context. Pass None for any field
+    to defer to the next-lower precedence layer (runtime override → env)."""
+    _REQUEST_CREDS.set((key or None, secret or None, paper))
+
+
+def clear_request_creds() -> None:
+    _REQUEST_CREDS.set(None)
+
+
 def _api_key() -> str | None:
+    rc = _REQUEST_CREDS.get()
+    if rc and rc[0]:
+        return rc[0]
     return os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
 
 
 def _api_secret() -> str | None:
+    rc = _REQUEST_CREDS.get()
+    if rc and rc[1]:
+        return rc[1]
     return os.getenv("ALPACA_API_SECRET") or os.getenv("APCA_API_SECRET_KEY")
 
 
@@ -79,63 +109,80 @@ def is_configured() -> bool:
 
 
 def is_live() -> bool:
-    """True only when ALPACA_PAPER is explicitly set to a falsy string.
+    """True only when paper trading is explicitly off.
 
-    A runtime override (set via the dashboard / Telegram /mode command) takes
-    precedence over the env var so the operator can flip paper↔live without a
-    redeploy. The override is intentionally process-local and resets on restart.
+    Precedence: per-request header > runtime override > ALPACA_PAPER env.
+    Header value `paper=True` forces paper, `paper=False` forces live; `None`
+    falls through.
     """
+    rc = _REQUEST_CREDS.get()
+    if rc and rc[2] is not None:
+        return not rc[2]
     if _mode_override is not None:
         return not _mode_override
     return os.getenv("ALPACA_PAPER", "true").strip().lower() in ("false", "0", "no")
 
 
 def set_paper_mode(paper: bool) -> None:
-    """Flip the live/paper switch at runtime. Resets the cached trading client so
-    the next broker call rebuilds against the new endpoint. Going live means REAL
-    money — callers must gate this behind an explicit confirmation."""
-    global _mode_override, _trading
+    """Flip the live/paper switch at runtime. Going live means REAL money —
+    callers must gate this behind an explicit confirmation."""
+    global _mode_override
     _mode_override = bool(paper)
-    _trading = None  # force the singleton to rebuild with the new `paper` flag
+    with _client_lock:
+        _trading_cache.clear()  # rebuild against the new endpoint on next call
     log.warning("[alpaca] runtime mode set to %s", "PAPER" if paper else "LIVE")
 
 
 def clear_mode_override() -> None:
     """Drop the runtime override and fall back to the ALPACA_PAPER env var."""
-    global _mode_override, _trading
+    global _mode_override
     _mode_override = None
-    _trading = None
+    with _client_lock:
+        _trading_cache.clear()
 
 
-# ── Clients (lazy singletons) ───────────────────────────────────────────────────
+# ── Clients (cached per (key, secret, paper) tuple) ─────────────────────────────
+#
+# Per-request creds mean the trading endpoint URL (paper vs. live) can change
+# request-to-request. A simple LRU-ish dict keyed by the cred tuple keeps us from
+# rebuilding SDK clients on every call while still respecting whichever creds
+# the caller sent. Capped at 8 entries — anything bigger means something is
+# wrong (way more rotating keys than any operator would have).
 
-_trading: "TradingClient | None" = None
-_option_data: "OptionHistoricalDataClient | None" = None
+_CLIENT_CACHE_MAX = 8
+_client_lock = threading.Lock()
+_trading_cache: dict[tuple, "TradingClient"] = {}
+_option_cache: dict[tuple, "OptionHistoricalDataClient"] = {}
+
+
+def _evict_if_full(cache: dict) -> None:
+    while len(cache) > _CLIENT_CACHE_MAX:
+        cache.pop(next(iter(cache)))
 
 
 def _trading_client() -> "TradingClient":
-    global _trading
-    if _trading is None:
-        _trading = TradingClient(
-            api_key=_api_key(),
-            secret_key=_api_secret(),
-            paper=not is_live(),
-        )
-        log.info(
-            "[alpaca] trading client up — mode=%s",
-            "LIVE" if is_live() else "PAPER",
-        )
-    return _trading
+    key, secret, paper = _api_key(), _api_secret(), not is_live()
+    cache_key = (key or "", secret or "", paper)
+    with _client_lock:
+        client = _trading_cache.get(cache_key)
+        if client is None:
+            client = TradingClient(api_key=key, secret_key=secret, paper=paper)
+            _trading_cache[cache_key] = client
+            _evict_if_full(_trading_cache)
+            log.info("[alpaca] trading client up — mode=%s", "LIVE" if not paper else "PAPER")
+        return client
 
 
 def _option_client() -> "OptionHistoricalDataClient":
-    global _option_data
-    if _option_data is None:
-        _option_data = OptionHistoricalDataClient(
-            api_key=_api_key(),
-            secret_key=_api_secret(),
-        )
-    return _option_data
+    key, secret = _api_key(), _api_secret()
+    cache_key = (key or "", secret or "")
+    with _client_lock:
+        client = _option_cache.get(cache_key)
+        if client is None:
+            client = OptionHistoricalDataClient(api_key=key, secret_key=secret)
+            _option_cache[cache_key] = client
+            _evict_if_full(_option_cache)
+        return client
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────

@@ -201,6 +201,28 @@ def require_app_auth(authorization: Optional[str] = Header(default=None)) -> Non
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad bearer token")
 
 
+def read_alpaca_headers(
+    x_alpaca_key: Optional[str] = Header(default=None, alias="X-Alpaca-Key"),
+    x_alpaca_secret: Optional[str] = Header(default=None, alias="X-Alpaca-Secret"),
+    x_alpaca_paper: Optional[str] = Header(default=None, alias="X-Alpaca-Paper"),
+) -> None:
+    """If the caller (companion service) supplies Alpaca creds in headers, push
+    them into the request-scoped contextvar in the broker module so that route
+    handlers see them as if they were the env-var creds. No headers → no
+    override; env vars stay in effect. Going live still requires an explicit
+    `X-Alpaca-Paper: false` from the caller — a missing header keeps paper."""
+    if not (x_alpaca_key or x_alpaca_secret or x_alpaca_paper):
+        return
+    paper: Optional[bool] = None
+    if x_alpaca_paper is not None:
+        v = x_alpaca_paper.strip().lower()
+        if v in ("true", "1", "yes"):
+            paper = True
+        elif v in ("false", "0", "no"):
+            paper = False
+    broker.set_request_creds(x_alpaca_key, x_alpaca_secret, paper)
+
+
 def require_admin_auth(authorization: Optional[str] = Header(default=None)) -> None:
     expected = os.getenv("ADMIN_TOKEN")
     if not expected:
@@ -397,7 +419,7 @@ def root():
 
 @app.get("/v1/radar/scan",
          response_model=List[ScannedTrade],
-         dependencies=[Depends(require_app_auth)])
+         dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def scan(capital: int = Query(..., ge=100)):
     if broker.is_configured():
         live = broker.scan_chains(capital)
@@ -409,7 +431,7 @@ def scan(capital: int = Query(..., ge=100)):
 
 @app.post("/v1/radar/deploy",
           response_model=DeployResponse,
-          dependencies=[Depends(require_app_auth)])
+          dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def deploy(req: DeployRequest):
     if not req.biometricToken:
         return DeployResponse(success=False, message="biometric token missing")
@@ -428,7 +450,7 @@ def deploy(req: DeployRequest):
 
 @app.get("/v1/armory/positions",
          response_model=List[ActivePosition],
-         dependencies=[Depends(require_app_auth)])
+         dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def positions():
     if broker.is_configured():
         return broker.list_positions()
@@ -437,7 +459,7 @@ def positions():
 
 @app.post("/v1/armory/close",
           response_model=CloseResponse,
-          dependencies=[Depends(require_app_auth)])
+          dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def close_position(req: CloseRequest):
     if not req.biometricToken:
         return CloseResponse(success=False, message="biometric token missing")
@@ -449,13 +471,13 @@ def close_position(req: CloseRequest):
 
 @app.post("/v1/officer/ask",
           response_model=RiskOfficerResponse,
-          dependencies=[Depends(require_app_auth)])
+          dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def officer_ask(req: RiskOfficerRequest):
     return RiskOfficerResponse(reply=gemini_officer_reply(req))
 
 
 @app.post("/v1/notifications/register",
-          dependencies=[Depends(require_app_auth)])
+          dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def register_token(req: FcmTokenRequest):
     if req.token:
         FCM_TOKENS.add(req.token)
