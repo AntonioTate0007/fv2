@@ -469,6 +469,21 @@ def close_position(req: CloseRequest):
     return CloseResponse(success=True, message="(mock) Position closed at market.")
 
 
+@app.get("/v1/earnings",
+         dependencies=[Depends(require_app_auth)])
+def earnings_calendar(tickers: str = Query(..., description="Comma-separated tickers")):
+    """Earnings-blackout gate snapshot. The companion calls this for the
+    universe + held position tickers so the user can see which underlyings
+    are inside the binary-event blackout window before they trade."""
+    requested = [t for t in (tickers or "").split(",") if t.strip()]
+    items = broker.get_earnings_calendar(requested)
+    return {
+        "items": items,
+        "blackoutDays": broker.EARNINGS_BLACKOUT_DAYS,
+        "asOf": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    }
+
+
 @app.post("/v1/officer/ask",
           response_model=RiskOfficerResponse,
           dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
