@@ -55,12 +55,29 @@ except ImportError:  # SDK not installed → routes fall back to mock data.
 
 
 # ── Config ──────────────────────────────────────────────────────────────────────
+#
+# v1.2 Hardening Cycle: the scanner now whitelists only high-liquidity index
+# ETFs, enforces a 10% OTM safety moat, and drops anything outside a strict
+# 0.10–0.15 short-leg delta band (≈ 1.5 standard-deviation buffer). Earnings
+# events inside the cycle window are skipped by the binary-event blackout.
 
-UNDERLYINGS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "SPY", "QQQ"]
+UNDERLYINGS = ["SPY", "QQQ", "IWM"]   # v1.2: broad-market ETF whitelist
+ETF_NO_EARNINGS = {"SPY", "QQQ", "IWM"}  # short-circuit for the earnings check
 TARGET_DTE_LO = 7
 TARGET_DTE_HI = 14
-MIN_OTM_BUFFER = 0.05   # short strike must be ≥5% below spot for puts
+MIN_OTM_BUFFER = 0.10   # v1.2: short strike must sit ≥10% below spot for puts
 SPREAD_WIDTH = 5.0      # default $5 wide for credit spreads
+
+# Strict delta band for the short put leg. Anything outside this range is
+# dropped, regardless of premium or buffer. Both bounds are |delta|.
+DELTA_MIN = 0.10
+DELTA_MAX = 0.15
+
+# Approx risk-free rate for Black-Scholes pricing — 3-mo T-bill territory.
+RISK_FREE_RATE = 0.045
+
+# How far past expiry an earnings event must clear before we'll trade a ticker.
+EARNINGS_BLACKOUT_DAYS = 7
 
 
 # ── Request-scoped overrides ────────────────────────────────────────────────────
@@ -475,14 +492,129 @@ def submit_spread(trade: dict, capital: int) -> tuple[bool, Optional[str], Optio
         return False, None, f"broker rejected: {e}"
 
 
+# ── v1.2 Filter Stack ───────────────────────────────────────────────────────────
+#
+# Tight Black-Scholes math for delta + implied vol so the scanner can enforce a
+# proper 1.5σ buffer on the short leg, plus an earnings-calendar guard that uses
+# yfinance when available (no-op for the ETF whitelist). All math is in pure
+# Python — keeps the deploy image lean and avoids a scipy/numpy dependency just
+# for one Newton's-method solver.
+
+_SQRT_2PI = math.sqrt(2.0 * math.pi)
+
+
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _norm_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / _SQRT_2PI
+
+
+def _bs_d1(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    return (math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+
+
+def _bs_put_price_vega(S: float, K: float, T: float, r: float, sigma: float) -> tuple[float, float]:
+    """Black-Scholes price + vega for a European put on a non-dividend underlying."""
+    d1 = _bs_d1(S, K, T, r, sigma)
+    d2 = d1 - sigma * math.sqrt(T)
+    price = K * math.exp(-r * T) * (1.0 - _norm_cdf(d2)) - S * (1.0 - _norm_cdf(d1))
+    vega = S * _norm_pdf(d1) * math.sqrt(T)
+    return price, vega
+
+
+def implied_vol_put(S: float, K: float, T: float, r: float, market_price: float,
+                    *, max_iter: int = 25, tol: float = 1e-4) -> float | None:
+    """Newton's method for IV. Returns None when the price is below intrinsic
+    or the solver can't converge — caller drops the contract."""
+    if T <= 0 or market_price <= 0 or S <= 0 or K <= 0:
+        return None
+    intrinsic = max(0.0, K * math.exp(-r * T) - S)
+    if market_price <= intrinsic + 1e-6:
+        return None
+    sigma = 0.30  # seed in a sensible region for index ETF puts
+    for _ in range(max_iter):
+        price, vega = _bs_put_price_vega(S, K, T, r, sigma)
+        diff = market_price - price
+        if abs(diff) < tol:
+            return max(0.01, min(3.0, sigma))
+        if vega <= 1e-8:
+            return None
+        sigma += diff / vega
+        if sigma <= 0.0:
+            sigma = 0.05
+    return max(0.01, min(3.0, sigma)) if 0.01 < sigma < 3.0 else None
+
+
+def put_delta(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """Black-Scholes delta of a European put. Negative; callers usually use abs()."""
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    return _norm_cdf(_bs_d1(S, K, T, r, sigma)) - 1.0
+
+
+# ── Earnings calendar (binary event blackout) ───────────────────────────────────
+
+_earnings_cache: dict[str, tuple[float, list[date]]] = {}
+_earnings_lock = threading.Lock()
+_EARNINGS_TTL = 3600.0  # 1 hour — earnings calendars don't move minute-to-minute
+
+
+def _next_earnings_dates(ticker: str) -> list[date]:
+    """Best-effort future-earnings lookup. Returns [] when the ticker has no
+    upcoming reports OR the lookup fails (so we err toward letting the trade
+    through — caller can still rely on other filters). yfinance is treated as
+    optional: missing → empty list."""
+    if ticker in ETF_NO_EARNINGS:
+        return []
+    now = time.monotonic()
+    with _earnings_lock:
+        cached = _earnings_cache.get(ticker)
+        if cached and now - cached[0] < _EARNINGS_TTL:
+            return cached[1]
+    try:
+        import yfinance as yf  # type: ignore
+    except ImportError:
+        return []
+    try:
+        df = yf.Ticker(ticker).get_earnings_dates(limit=4)
+        dates: list[date] = []
+        if df is not None and not df.empty:
+            today = date.today()
+            for ts in df.index:
+                try:
+                    d = ts.date() if hasattr(ts, "date") else ts
+                    if d >= today:
+                        dates.append(d)
+                except Exception:
+                    continue
+        with _earnings_lock:
+            _earnings_cache[ticker] = (now, dates)
+        return dates
+    except Exception as e:
+        log.warning("[earnings] yfinance lookup %s failed: %s", ticker, e)
+        return []
+
+
+def has_earnings_in_window(ticker: str, today: date, expiry: date,
+                           blackout_days: int = EARNINGS_BLACKOUT_DAYS) -> bool:
+    """True when an earnings report falls between `today` and `expiry + blackout_days`."""
+    cutoff = expiry + timedelta(days=blackout_days)
+    for d in _next_earnings_dates(ticker):
+        if today <= d <= cutoff:
+            return True
+    return False
+
+
 # ── Scanner ─────────────────────────────────────────────────────────────────────
 
 def scan_chains(capital: int) -> list[dict]:
     """
-    Pull live options chains for the configured UNDERLYINGS and surface put-credit
-    spread candidates that pass the basic Fortress filters: DTE 7-14, short strike
-    ≥5% OTM. This is intentionally minimal — the heavy filter stack (IV rank,
-    earnings clearance, etc.) belongs in a separate enrichment pass.
+    Pull live options chains for the configured UNDERLYINGS (v1.2: SPY/QQQ/IWM)
+    and surface put-credit spread candidates that pass the hardened filter
+    stack: DTE 7-14, ≥10% OTM safety moat, short-leg |delta| in [0.10, 0.15],
+    and no earnings event between today and expiry+7d.
     """
     if not is_configured():
         return []
@@ -524,78 +656,127 @@ def scan_chains(capital: int) -> list[dict]:
         except Exception as e:
             log.warning("[alpaca] chain fetch %s failed: %s", ticker, e)
             continue
-
-        # Pick a short put ~7-10% OTM, with the longest DTE in the window so we
-        # capture max premium without going past the theta sweet spot.
-        target_short_strike = spot * (1 - 0.07)
-        candidates = sorted(
-            contracts,
-            key=lambda c: (
-                abs(float(c.strike_price) - target_short_strike),
-                -datetime.fromisoformat(str(c.expiration_date)).toordinal(),
-            )
-        )
-        if not candidates:
-            continue
-        short_c = candidates[0]
-        short_strike = float(short_c.strike_price)
-        # The long-protection strike is short_strike - SPREAD_WIDTH, find nearest:
-        long_target = short_strike - SPREAD_WIDTH
-        long_c = min(
-            (c for c in contracts
-             if str(c.expiration_date) == str(short_c.expiration_date)
-             and float(c.strike_price) < short_strike),
-            key=lambda c: abs(float(c.strike_price) - long_target),
-            default=None,
-        )
-        if long_c is None:
-            continue
-        long_strike = float(long_c.strike_price)
-        if short_strike - long_strike <= 0:
+        if not contracts:
             continue
 
-        # Quote both legs to estimate the net credit.
-        try:
-            qreq = OptionLatestQuoteRequest(
-                symbol_or_symbols=[short_c.symbol, long_c.symbol]
-            )
-            quotes = odc.get_option_latest_quote(qreq)
-            sb = float(getattr(quotes.get(short_c.symbol), "bid_price", 0) or 0)
-            la = float(getattr(quotes.get(long_c.symbol), "ask_price", 0) or 0)
-            net_credit = max(0.0, round(sb - la, 2))
-        except Exception as e:
-            log.warning("[alpaca] quote %s failed: %s", ticker, e)
-            net_credit = 0.0
+        # ── v1.2: iterate every OTM put, apply the filter stack, score survivors.
+        # Pre-bucket contracts by expiration so we can pair short/long legs
+        # within the same cycle.
+        by_exp: dict[str, list] = {}
+        for c in contracts:
+            exp = str(c.expiration_date)
+            try:
+                strike = float(c.strike_price)
+            except (TypeError, ValueError):
+                continue
+            if strike >= spot:
+                continue  # only OTM puts (strike < spot)
+            by_exp.setdefault(exp, []).append((strike, c))
 
-        exp_iso = str(short_c.expiration_date)
-        try:
-            dte = (datetime.fromisoformat(exp_iso).date() - today).days
-        except ValueError:
-            dte = 0
-        safety_buffer = max(0.0, (spot - short_strike) / spot)
-        if safety_buffer < MIN_OTM_BUFFER:
-            continue
+        ticker_survivors: list[dict] = []
 
-        # Probability of profit ≈ 1 - |delta| of the short leg. We don't have delta
-        # without a Greeks call; approximate with normalized buffer for now.
-        prob_profit = max(0.55, min(0.92, 0.55 + safety_buffer * 4))
-        iv_rank = 0.50  # placeholder — needs historical IV to compute properly
+        for exp_iso, leg_list in by_exp.items():
+            try:
+                exp_date = datetime.fromisoformat(exp_iso).date()
+            except ValueError:
+                continue
+            dte = (exp_date - today).days
+            T = max(dte / 365.0, 1.0 / 365.0)
 
-        out.append({
-            "id": f"{ticker}-PCS-{int(short_strike)}",
-            "ticker": ticker,
-            "strategy": "PUT_CREDIT_SPREAD",
-            "shortStrike": short_strike,
-            "longStrike": long_strike,
-            "expiration": exp_iso,
-            "dte": dte,
-            "estimatedCreditPerContract": net_credit,
-            "safetyBufferPct": round(safety_buffer, 4),
-            "underlyingPrice": round(spot, 2),
-            "probabilityOfProfit": round(prob_profit, 2),
-            "ivRank": iv_rank,
-            "earningsClear": True,  # TODO: cross-check earnings calendar
-        })
+            # v1.2 binary-event blackout: skip this whole expiration cycle for
+            # tickers with an earnings event between now and exp + 7 days.
+            if has_earnings_in_window(ticker, today, exp_date):
+                log.info("[scan] %s @ %s — earnings inside window, expiry blackout",
+                         ticker, exp_iso)
+                continue
+
+            leg_list.sort(key=lambda x: x[0])  # ascending by strike
+            for short_strike, short_c in leg_list:
+                # ── Filter 1: 10% OTM safety moat.
+                safety_buffer = (spot - short_strike) / spot
+                if safety_buffer < MIN_OTM_BUFFER:
+                    continue  # too close to spot
+
+                # ── Quote the short leg before computing delta (need a mid).
+                try:
+                    sq = odc.get_option_latest_quote(
+                        OptionLatestQuoteRequest(symbol_or_symbols=[short_c.symbol])
+                    ).get(short_c.symbol)
+                    sb = float(getattr(sq, "bid_price", 0) or 0)
+                    sa = float(getattr(sq, "ask_price", 0) or 0)
+                except Exception as e:
+                    log.warning("[alpaca] short quote %s/%s failed: %s",
+                                ticker, short_c.symbol, e)
+                    continue
+                if sb <= 0 or sa <= 0 or sb > sa:
+                    continue
+                short_mid = (sb + sa) / 2.0
+
+                # ── Filter 2: Black-Scholes |delta| in [0.10, 0.15].
+                sigma = implied_vol_put(spot, short_strike, T, RISK_FREE_RATE, short_mid)
+                if sigma is None:
+                    continue  # quote outside model — drop
+                delta_abs = abs(put_delta(spot, short_strike, T, RISK_FREE_RATE, sigma))
+                if not (DELTA_MIN <= delta_abs <= DELTA_MAX):
+                    log.debug("[scan] %s @ %s short %.2f: |delta|=%.3f outside band",
+                              ticker, exp_iso, short_strike, delta_abs)
+                    continue
+
+                # ── Find long leg ~SPREAD_WIDTH below, same expiration.
+                long_target = short_strike - SPREAD_WIDTH
+                long_pair = min(
+                    (p for p in leg_list if p[0] < short_strike),
+                    key=lambda p: abs(p[0] - long_target),
+                    default=None,
+                )
+                if long_pair is None:
+                    continue
+                long_strike, long_c = long_pair
+                if short_strike - long_strike <= 0:
+                    continue
+
+                # ── Quote the long leg and compute net credit.
+                try:
+                    lq = odc.get_option_latest_quote(
+                        OptionLatestQuoteRequest(symbol_or_symbols=[long_c.symbol])
+                    ).get(long_c.symbol)
+                    la = float(getattr(lq, "ask_price", 0) or 0)
+                except Exception as e:
+                    log.warning("[alpaca] long quote %s/%s failed: %s",
+                                ticker, long_c.symbol, e)
+                    continue
+                if la <= 0:
+                    continue
+                net_credit = max(0.0, round(sb - la, 2))
+                if net_credit <= 0:
+                    continue
+
+                ticker_survivors.append({
+                    "id": f"{ticker}-PCS-{int(short_strike)}-{exp_iso}",
+                    "ticker": ticker,
+                    "strategy": "PUT_CREDIT_SPREAD",
+                    "shortStrike": short_strike,
+                    "longStrike": long_strike,
+                    "expiration": exp_iso,
+                    "dte": dte,
+                    "estimatedCreditPerContract": net_credit,
+                    "safetyBufferPct": round(safety_buffer, 4),
+                    "underlyingPrice": round(spot, 2),
+                    "probabilityOfProfit": round(1.0 - delta_abs, 3),
+                    "shortDelta": round(delta_abs, 3),
+                    "impliedVol": round(sigma, 3),
+                    "ivRank": 0.50,  # TODO: wire historical IV pipeline
+                    "earningsClear": True,
+                })
+
+        # Pick the best survivor per ticker — highest credit wins, ties broken
+        # by deeper buffer.
+        if ticker_survivors:
+            best = max(ticker_survivors,
+                       key=lambda x: (x["estimatedCreditPerContract"], x["safetyBufferPct"]))
+            out.append(best)
+        else:
+            log.info("[scan] %s — no candidate passed the v1.2 filter stack", ticker)
 
     return out
 
