@@ -1,0 +1,4 @@
+fortress_config.json
+__pycache__/
+*.pyc
+.venv/

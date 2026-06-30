@@ -33,3 +33,16 @@ services:
         sync: false
       - key: ELEVENLABS_API_KEY    # optional premium TTS; gTTS used when blank
         sync: false
+
+  # ── Fortress Companion v1.1 — touchscreen UI ported to the web ──────────────
+  - type: web
+    name: fortress-companion
+    runtime: docker
+    rootDir: companion
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN    # paste @BotFather token (or set via /settings)
+        sync: false
+      - key: TELEGRAM_CHAT_ID      # paste destination chat ID
+        sync: false
