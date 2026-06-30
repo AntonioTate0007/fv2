@@ -40,7 +40,11 @@ services:
     plan: free
     healthCheckPath: /healthz
     envVars:
-      - key: TELEGRAM_BOT_TOKEN    # paste @BotFather token (or set via /settings)
+      - key: TELEGRAM_BOT_TOKEN    # paste @BotFather token (or set via Settings tab)
         sync: false
-      - key: TELEGRAM_CHAT_ID      # paste destination chat ID
+      - key: TELEGRAM_CHAT_ID      # destination chat ID(s), comma-separated
+        sync: false
+      - key: FORTRESS_API_URL      # base URL of the fortress-api service (e.g. https://fortress-api.onrender.com)
+        sync: false
+      - key: FORTRESS_API_TOKEN    # bearer token for fortress-api's /v1/* routes
         sync: false
