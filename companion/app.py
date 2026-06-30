@@ -3,16 +3,18 @@ Fortress Companion v1.1 — cloud edition.
 
 Web port of the original Pygame touchscreen UI. Single Flask service:
 
-    /              dark/gold dashboard with status + slide-out log drawer
-    /settings      config portal (Telegram bot token + chat ID)
+    /              dark/gold dashboard with always-visible alert feed
+    /settings      config portal (Telegram bot token, chat IDs, on/off)
     /save          POST: persist config to fortress_config.json
-    /alert         POST: trigger a test Telegram alert
-    /logs          GET:  JSON tail of recent log entries (drawer polls this)
+    /alert         POST: trigger a test alert (always logged on-screen,
+                         relayed to Telegram only if enabled + configured)
+    /logs          GET:  JSON tail of recent log entries (feed polls this)
     /healthz       GET:  liveness probe for Render
 
-Config precedence: env vars (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID) act as
-defaults; values saved through /settings override them at runtime and persist
-to fortress_config.json. On ephemeral hosts (Render free tier) the JSON file
+Config precedence: env vars (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, the
+latter may be comma-separated for multiple recipients) act as defaults;
+values saved through /settings override them at runtime and persist to
+fortress_config.json. On ephemeral hosts (Render free tier) the JSON file
 resets on every deploy — set the env vars in the dashboard for durability.
 """
 
@@ -43,13 +45,20 @@ _config_lock = threading.Lock()
 def _load_config() -> dict:
     cfg = {
         "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
-        "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
+        # comma-separated list of chat IDs; env var TELEGRAM_CHAT_ID can hold
+        # one ID or several separated by commas
+        "telegram_chat_ids": os.environ.get("TELEGRAM_CHAT_ID", ""),
+        "telegram_enabled": True,
         "hardware_pref": "standard",
     }
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
-                cfg.update(json.load(f))
+                stored = json.load(f)
+                # back-compat: old configs used the singular `telegram_chat_id`
+                if "telegram_chat_id" in stored and "telegram_chat_ids" not in stored:
+                    stored["telegram_chat_ids"] = stored.pop("telegram_chat_id")
+                cfg.update(stored)
         except (OSError, json.JSONDecodeError) as e:
             log.warning("could not read %s: %s", CONFIG_FILE, e)
     return cfg
@@ -58,6 +67,10 @@ def _load_config() -> dict:
 def _save_config(cfg: dict) -> None:
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=4)
+
+
+def _parse_chat_ids(raw: str) -> list[str]:
+    return [p.strip() for p in (raw or "").split(",") if p.strip()]
 
 
 app_config = _load_config()
@@ -88,21 +101,26 @@ add_log("System initialized")
 def send_telegram_alert(message: str) -> None:
     with _config_lock:
         token = app_config.get("telegram_bot_token", "")
-        chat_id = app_config.get("telegram_chat_id", "")
+        chat_ids = _parse_chat_ids(app_config.get("telegram_chat_ids", ""))
+        enabled = bool(app_config.get("telegram_enabled", True))
 
-    if not token or not chat_id:
-        add_log("ERR: Telegram not configured — set token + chat ID in /settings", "error")
+    if not enabled:
+        add_log("Telegram disabled in settings — alert shown on screen only")
+        return
+    if not token or not chat_ids:
+        add_log("ERR: Telegram not configured — set token + chat ID(s) in /settings", "error")
         return
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        resp = requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=10)
-        if resp.ok:
-            add_log(f"SENT: {message}", "success")
-        else:
-            add_log(f"ERR: Telegram {resp.status_code} — {resp.text[:120]}", "error")
-    except requests.RequestException as e:
-        add_log(f"ERR: {e}", "error")
+    for chat_id in chat_ids:
+        try:
+            resp = requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=10)
+            if resp.ok:
+                add_log(f"SENT → {chat_id}: {message}", "success")
+            else:
+                add_log(f"ERR: Telegram {resp.status_code} for {chat_id} — {resp.text[:120]}", "error")
+        except requests.RequestException as e:
+            add_log(f"ERR: {chat_id} — {e}", "error")
 
 
 # ── Flask app ───────────────────────────────────────────────────────────────
@@ -114,14 +132,16 @@ DASHBOARD_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=800, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fortress Companion v1.1</title>
 <style>
   :root {
     --bg: #121212;
-    --panel: #1e1e1e;
+    --panel: #1a1a1a;
+    --panel-2: #1e1e1e;
     --gold: #ffd700;
     --green: #00ff80;
+    --red: #ff5c5c;
     --muted: #8a8a8a;
     --text: #e0e0e0;
     --border: #2a2a2a;
@@ -131,16 +151,37 @@ DASHBOARD_HTML = """<!doctype html>
     margin: 0; padding: 0;
     background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-    height: 100vh; overflow: hidden;
+    min-height: 100vh;
   }
-  .stage {
-    position: relative;
-    width: 100vw; height: 100vh;
-    padding: 28px 32px;
+  .page {
+    max-width: 1100px; margin: 0 auto;
+    padding: 24px 24px 40px 24px;
+    display: flex; flex-direction: column; gap: 20px;
   }
-  h1 { margin: 0 0 6px 0; font-size: 26px; font-weight: 600; letter-spacing: 0.3px; }
+
+  /* Header */
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px;
+  }
+  h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 0.3px; }
+  .settings-link {
+    color: var(--muted); text-decoration: none; font-size: 14px;
+    border: 1px solid var(--border); padding: 7px 14px; border-radius: 4px;
+  }
+  .settings-link:hover { color: var(--gold); border-color: var(--gold); }
+
+  /* Status + actions card */
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px;
+  }
+  .status-row {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 16px;
+  }
   .status {
-    font-size: 22px; color: var(--green); font-weight: 500;
+    font-size: 20px; color: var(--green); font-weight: 500;
     display: flex; align-items: center; gap: 10px;
   }
   .dot {
@@ -148,127 +189,139 @@ DASHBOARD_HTML = """<!doctype html>
     background: var(--green); box-shadow: 0 0 12px var(--green);
     animation: pulse 2s ease-in-out infinite;
   }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .meta .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    background: #222; color: var(--muted); margin-right: 6px;
+    border: 1px solid var(--border); font-size: 12px;
   }
-  .controls {
-    position: absolute; bottom: 28px; left: 32px; right: 32px;
-    display: flex; gap: 12px; align-items: center; justify-content: space-between;
-  }
-  .hint { color: var(--muted); font-size: 14px; }
+  .meta .pill.on { color: var(--green); border-color: rgba(0,255,128,0.3); }
+  .meta .pill.off { color: var(--muted); }
+
   .btn {
     background: var(--gold); color: #121212; border: none;
     padding: 12px 22px; font-size: 15px; font-weight: 700;
     border-radius: 6px; cursor: pointer; letter-spacing: 0.2px;
-    transition: transform 0.08s ease, box-shadow 0.15s ease;
+    transition: transform .08s ease, box-shadow .15s ease;
   }
   .btn:hover { box-shadow: 0 0 18px rgba(255,215,0,0.35); }
   .btn:active { transform: translateY(1px); }
-  .btn.ghost {
-    background: transparent; color: var(--gold);
-    border: 1px solid var(--gold);
-  }
-  .settings-link {
-    position: absolute; top: 28px; right: 32px;
-    color: var(--muted); text-decoration: none; font-size: 14px;
-    border: 1px solid var(--border); padding: 6px 12px; border-radius: 4px;
-  }
-  .settings-link:hover { color: var(--gold); border-color: var(--gold); }
+  .btn:disabled { opacity: .6; cursor: wait; }
 
-  /* Slide-out drawer */
-  .drawer {
-    position: absolute; top: 0; right: 0;
-    width: 360px; height: 100%;
-    background: var(--panel);
-    border-left: 2px solid var(--gold);
-    transform: translateX(100%);
-    transition: transform 0.35s cubic-bezier(.2,.7,.2,1);
-    display: flex; flex-direction: column;
-    box-shadow: -8px 0 24px rgba(0,0,0,0.5);
+  /* Alert feed */
+  .feed-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 12px;
   }
-  .drawer.open { transform: translateX(0); }
-  .drawer h2 {
-    color: var(--gold); margin: 0;
-    padding: 22px 22px 12px 22px;
-    font-size: 18px; font-weight: 600;
-    border-bottom: 1px solid var(--border);
+  .feed-head h2 {
+    margin: 0; color: var(--gold); font-size: 17px; font-weight: 600;
   }
-  .log-list {
-    flex: 1; overflow-y: auto;
-    padding: 12px 22px 22px 22px;
+  .feed-head .count { color: var(--muted); font-size: 13px; }
+  .feed {
+    max-height: 60vh; overflow-y: auto;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 13px;
+    font-size: 13.5px;
   }
-  .log-list .row {
-    padding: 6px 0;
-    border-bottom: 1px solid #262626;
-    color: #c8c8c8;
-    word-break: break-word;
+  .feed .row {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px 0; border-bottom: 1px solid #262626;
   }
-  .log-list .ts { color: var(--muted); margin-right: 8px; }
-  .log-list .success { color: var(--green); }
-  .log-list .error { color: #ff5c5c; }
-  .log-list .info { color: #c8c8c8; }
-  .log-list:empty::before {
-    content: "No log entries yet."; color: var(--muted); font-style: italic;
+  .feed .row:last-child { border-bottom: none; }
+  .feed .ts { color: var(--muted); flex: 0 0 auto; }
+  .feed .msg { word-break: break-word; flex: 1; }
+  .feed .success { color: var(--green); }
+  .feed .error { color: var(--red); }
+  .feed .info { color: #c8c8c8; }
+  .feed:empty::before {
+    content: "No alerts yet."; color: var(--muted); font-style: italic;
+    display: block; padding: 16px 0;
+  }
+  .new-flash { animation: flash .8s ease; }
+  @keyframes flash {
+    0% { background: rgba(255,215,0,.18); }
+    100% { background: transparent; }
   }
 </style>
 </head>
 <body>
-<div class="stage">
-  <a class="settings-link" href="/settings">⚙ Settings</a>
+<div class="page">
+  <header>
+    <h1>Fortress Companion v1.1</h1>
+    <a class="settings-link" href="/settings">⚙ Settings</a>
+  </header>
 
-  <h1>Fortress Companion v1.1</h1>
-  <div class="status"><span class="dot"></span><span>System Status: SCANNING</span></div>
-
-  <div class="controls">
-    <span class="hint">Test the Telegram bridge or open the log drawer.</span>
-    <div>
-      <button class="btn ghost" id="toggleDrawer">Toggle Log Drawer</button>
+  <section class="card">
+    <div class="status-row">
+      <div>
+        <div class="status"><span class="dot"></span><span>System Status: SCANNING</span></div>
+        <div class="meta" id="meta"></div>
+      </div>
       <button class="btn" id="testAlert">Trigger Test Alert</button>
     </div>
-  </div>
+  </section>
 
-  <aside class="drawer" id="drawer">
-    <h2>Telegram Feed Logs</h2>
-    <div class="log-list" id="logList"></div>
-  </aside>
+  <section class="card">
+    <div class="feed-head">
+      <h2>Alerts</h2>
+      <span class="count" id="feedCount"></span>
+    </div>
+    <div class="feed" id="feed"></div>
+  </section>
 </div>
 
 <script>
-  const drawer = document.getElementById('drawer');
-  const logList = document.getElementById('logList');
-  const toggleBtn = document.getElementById('toggleDrawer');
+  const feed = document.getElementById('feed');
+  const feedCount = document.getElementById('feedCount');
+  const metaEl = document.getElementById('meta');
   const alertBtn = document.getElementById('testAlert');
-
-  toggleBtn.addEventListener('click', () => drawer.classList.toggle('open'));
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'd' || e.key === 'D') drawer.classList.toggle('open');
-    if (e.key === 't' || e.key === 'T') triggerAlert();
-  });
+  let lastTopKey = '';
 
   alertBtn.addEventListener('click', triggerAlert);
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.key === 't' || e.key === 'T') triggerAlert();
+  });
 
   async function triggerAlert() {
     alertBtn.disabled = true;
     try {
       await fetch('/alert', { method: 'POST' });
-      await refreshLogs();
-      if (!drawer.classList.contains('open')) drawer.classList.add('open');
+      await refreshLogs(true);
     } finally {
-      setTimeout(() => { alertBtn.disabled = false; }, 800);
+      setTimeout(() => { alertBtn.disabled = false; }, 600);
     }
   }
 
-  async function refreshLogs() {
+  async function refreshLogs(flashNew) {
     try {
       const res = await fetch('/logs');
       const data = await res.json();
-      logList.innerHTML = data.logs.slice(-50).map(row =>
-        `<div class="row"><span class="ts">${row.ts}</span><span class="${row.level}">${escapeHtml(row.message)}</span></div>`
-      ).reverse().join('');
+      const rows = (data.logs || []).slice().reverse();
+      feedCount.textContent = rows.length ? `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}` : '';
+      feed.innerHTML = rows.map(r =>
+        `<div class="row"><span class="ts">${r.ts}</span><span class="msg ${r.level}">${escapeHtml(r.message)}</span></div>`
+      ).join('');
+      if (flashNew && rows.length) {
+        const top = feed.firstElementChild;
+        const key = rows[0].ts + rows[0].message;
+        if (top && key !== lastTopKey) top.classList.add('new-flash');
+        lastTopKey = key;
+      } else if (rows.length) {
+        lastTopKey = rows[0].ts + rows[0].message;
+      }
+      renderMeta(data.config || {});
     } catch (e) { /* ignore transient errors */ }
+  }
+
+  function renderMeta(cfg) {
+    const parts = [];
+    parts.push(`<span class="pill ${cfg.telegram_ready ? 'on' : 'off'}">Telegram: ${cfg.telegram_ready ? 'on' : 'off'}</span>`);
+    if (cfg.telegram_chat_count > 0) {
+      parts.push(`<span class="pill">${cfg.telegram_chat_count} recipient${cfg.telegram_chat_count === 1 ? '' : 's'}</span>`);
+    }
+    metaEl.innerHTML = parts.join(' ');
   }
 
   function escapeHtml(s) {
@@ -277,8 +330,8 @@ DASHBOARD_HTML = """<!doctype html>
     }[c]));
   }
 
-  refreshLogs();
-  setInterval(refreshLogs, 3000);
+  refreshLogs(false);
+  setInterval(() => refreshLogs(false), 3000);
 </script>
 </body>
 </html>
@@ -289,23 +342,38 @@ SETTINGS_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fortress Companion · Settings</title>
 <style>
   body {
     background: #121212; color: #e0e0e0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-    margin: 0; padding: 40px 32px; max-width: 640px;
+    margin: 0; padding: 40px 24px; max-width: 720px; margin-left:auto; margin-right:auto;
   }
-  h2 { color: #ffd700; margin: 0 0 8px 0; }
+  h2 { color: #ffd700; margin: 0 0 6px 0; }
   .sub { color: #8a8a8a; margin-bottom: 28px; font-size: 14px; }
-  label { display: block; margin: 18px 0 6px 0; font-size: 14px; color: #c8c8c8; }
-  input[type=text] {
+  label { display: block; margin: 20px 0 6px 0; font-size: 14px; color: #c8c8c8; }
+  .hint { color: #8a8a8a; font-size: 12px; margin-top: 4px; }
+  input[type=text], textarea {
     width: 100%; padding: 10px 12px; font-size: 14px;
     background: #1e1e1e; color: #e0e0e0;
     border: 1px solid #2a2a2a; border-radius: 4px;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    resize: vertical;
   }
-  input[type=text]:focus { outline: none; border-color: #ffd700; }
+  textarea { min-height: 70px; }
+  input[type=text]:focus, textarea:focus { outline: none; border-color: #ffd700; }
+
+  .toggle {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; background: #1a1a1a;
+    border: 1px solid #2a2a2a; border-radius: 6px;
+    margin-top: 12px;
+  }
+  .toggle input { width: 18px; height: 18px; accent-color: #ffd700; cursor: pointer; }
+  .toggle label { margin: 0; cursor: pointer; flex: 1; color: #e0e0e0; font-size: 14px; }
+  .toggle .desc { color: #8a8a8a; font-size: 12px; display: block; margin-top: 3px; }
+
   .row { display: flex; gap: 14px; margin-top: 28px; align-items: center; }
   button {
     background: #ffd700; color: #121212; border: none;
@@ -327,30 +395,52 @@ SETTINGS_HTML = """<!doctype html>
 </head>
 <body>
   <h2>Fortress Companion Settings</h2>
-  <div class="sub">Telegram bridge configuration · v1.1</div>
+  <div class="sub">Configure the on-screen alert feed and Telegram bridge · v1.1</div>
 
-  {% if saved %}<div class="flash">Settings saved to fortress_config.json.</div>{% endif %}
+  {% if saved %}<div class="flash">Settings saved.</div>{% endif %}
 
   <form action="/save" method="POST">
     <label for="bot_token">Telegram Bot Token</label>
     <input type="text" id="bot_token" name="bot_token" value="{{ config.telegram_bot_token }}" placeholder="123456:ABC-DEF...">
+    <div class="hint">Get this from @BotFather on Telegram.</div>
 
-    <label for="chat_id">Telegram Chat ID</label>
-    <input type="text" id="chat_id" name="chat_id" value="{{ config.telegram_chat_id }}" placeholder="-1001234567890">
+    <label for="chat_ids">Telegram Chat IDs</label>
+    <textarea id="chat_ids" name="chat_ids" placeholder="-1001234567890, 987654321">{{ config.telegram_chat_ids }}</textarea>
+    <div class="hint">One or more chat IDs, separated by commas. Each alert goes to every recipient. DM @userinfobot on Telegram to find your chat ID.</div>
+
+    <div class="toggle">
+      <input type="checkbox" id="telegram_enabled" name="telegram_enabled" {% if config.telegram_enabled %}checked{% endif %}>
+      <label for="telegram_enabled">
+        Send alerts to Telegram
+        <span class="desc">When off, alerts only appear on the on-screen feed. Useful for quiet hours or web-only viewing.</span>
+      </label>
+    </div>
 
     <div class="row">
-      <button type="submit">Save Configuration</button>
+      <button type="submit">Save Settings</button>
       <a class="back" href="/">← Back to dashboard</a>
     </div>
   </form>
 
   <div class="note">
     On Render's free tier the container's filesystem is ephemeral — values saved here reset on every deploy.
-    For durability, set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> as environment variables in the Render dashboard.
+    For durability set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> (comma-separated is fine) as environment variables in the Render dashboard.
   </div>
 </body>
 </html>
 """
+
+
+def _status_summary() -> dict:
+    with _config_lock:
+        token = app_config.get("telegram_bot_token", "")
+        ids = _parse_chat_ids(app_config.get("telegram_chat_ids", ""))
+        enabled = bool(app_config.get("telegram_enabled", True))
+    return {
+        "telegram_chat_count": len(ids),
+        "telegram_ready": bool(token and ids and enabled),
+        "telegram_enabled": enabled,
+    }
 
 
 @app.route("/")
@@ -370,7 +460,9 @@ def settings():
 def save():
     with _config_lock:
         app_config["telegram_bot_token"] = request.form.get("bot_token", "").strip()
-        app_config["telegram_chat_id"] = request.form.get("chat_id", "").strip()
+        app_config["telegram_chat_ids"] = request.form.get("chat_ids", "").strip()
+        app_config["telegram_enabled"] = request.form.get("telegram_enabled") == "on"
+        app_config.pop("telegram_chat_id", None)  # remove legacy key on save
         try:
             _save_config(app_config)
         except OSError as e:
@@ -381,7 +473,7 @@ def save():
 
 @app.route("/alert", methods=["POST"])
 def alert():
-    add_log("Manual test alert triggered")
+    add_log("🚨 Manual test alert triggered")
     threading.Thread(
         target=send_telegram_alert,
         args=("🚨 Fortress Test Action Triggered from Companion GUI",),
@@ -393,7 +485,8 @@ def alert():
 @app.route("/logs")
 def logs_endpoint():
     with _logs_lock:
-        return jsonify({"logs": list(logs)})
+        rows = list(logs)
+    return jsonify({"logs": rows, "config": _status_summary()})
 
 
 @app.route("/healthz")
