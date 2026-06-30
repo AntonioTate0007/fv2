@@ -68,6 +68,9 @@ def _load_config() -> dict:
         "fortress_api_url": os.environ.get("FORTRESS_API_URL", ""),
         "fortress_api_token": os.environ.get("FORTRESS_API_TOKEN", ""),
         "scan_capital": 5000,
+        "alpaca_api_key": os.environ.get("ALPACA_API_KEY", ""),
+        "alpaca_api_secret": os.environ.get("ALPACA_API_SECRET", ""),
+        "alpaca_paper": (os.environ.get("ALPACA_PAPER", "true").lower() != "false"),
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -330,11 +333,14 @@ def api_config():
             for key in (
                 "telegram_bot_token", "telegram_chat_ids",
                 "fortress_api_url", "fortress_api_token",
+                "alpaca_api_key", "alpaca_api_secret",
             ):
                 if key in payload:
                     app_config[key] = str(payload[key]).strip()
             if "telegram_enabled" in payload:
                 app_config["telegram_enabled"] = bool(payload["telegram_enabled"])
+            if "alpaca_paper" in payload:
+                app_config["alpaca_paper"] = bool(payload["alpaca_paper"])
             if "scan_capital" in payload:
                 try:
                     app_config["scan_capital"] = max(100, int(payload["scan_capital"]))
@@ -364,6 +370,11 @@ def api_config():
         "fortress_api_token_present": bool(cfg.get("fortress_api_token")),
         "scan_capital": cfg.get("scan_capital", 5000),
         "backend_connected": bool(cfg.get("fortress_api_url") and cfg.get("fortress_api_token")),
+        "alpaca_api_key_masked": mask(cfg.get("alpaca_api_key", "")),
+        "alpaca_api_key_present": bool(cfg.get("alpaca_api_key")),
+        "alpaca_api_secret_masked": mask(cfg.get("alpaca_api_secret", "")),
+        "alpaca_api_secret_present": bool(cfg.get("alpaca_api_secret")),
+        "alpaca_paper": bool(cfg.get("alpaca_paper", True)),
     })
 
 
@@ -1177,6 +1188,23 @@ async function renderSettings() {
       </div>
 
       <div class="section">
+        <h3>Alpaca Broker</h3>
+        <p class="desc">Your Alpaca paper/live trading credentials. <strong>Note:</strong> the actual broker calls happen on the fortress-api service — for live data you also need to paste these into <code>ALPACA_API_KEY</code> / <code>ALPACA_API_SECRET</code> on the fortress-api Render service. Saving here keeps them in one place for reference.</p>
+        <label>Alpaca API Key</label>
+        <input type="text" id="alpaca-key" value="" placeholder="${cfg.alpaca_api_key_present ? cfg.alpaca_api_key_masked + ' — leave blank to keep current' : '(not set)'}">
+        <label>Alpaca API Secret</label>
+        <input type="text" id="alpaca-secret" value="" placeholder="${cfg.alpaca_api_secret_present ? cfg.alpaca_api_secret_masked + ' — leave blank to keep current' : '(not set)'}">
+        <div class="row">
+          <input type="checkbox" id="alpaca-paper" ${cfg.alpaca_paper ? 'checked' : ''}>
+          <label for="alpaca-paper">Paper trading (safe default — uncheck only when you're sure you want real-money orders)</label>
+        </div>
+        <div class="save-row">
+          <button class="btn btn-primary" data-section="alpaca">Save Alpaca</button>
+          <span class="status">${cfg.alpaca_api_key_present && cfg.alpaca_api_secret_present ? (cfg.alpaca_paper ? 'Saved · paper mode.' : 'Saved · LIVE mode.') : 'Not configured.'}</span>
+        </div>
+      </div>
+
+      <div class="section">
         <h3>Telegram Bridge</h3>
         <p class="desc">When enabled, every alert (test or auto) is delivered to every chat ID listed.</p>
         <label>Bot Token (@BotFather)</label>
@@ -1211,6 +1239,12 @@ async function saveSettings(section, btn) {
     if (t) payload.telegram_bot_token = t;
     payload.telegram_chat_ids = $("#tg-chats").value;
     payload.telegram_enabled = $("#tg-enabled").checked;
+  } else if (section === "alpaca") {
+    const k = $("#alpaca-key").value.trim();
+    const s = $("#alpaca-secret").value.trim();
+    if (k) payload.alpaca_api_key = k;
+    if (s) payload.alpaca_api_secret = s;
+    payload.alpaca_paper = $("#alpaca-paper").checked;
   }
   btn.disabled = true;
   try {
