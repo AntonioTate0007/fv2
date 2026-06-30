@@ -316,53 +316,61 @@ def _demo_earnings(tickers: list[str]) -> dict:
 
 
 def _demo_scan() -> list[dict]:
-    """Sample plays so the UI works before fortress-api is wired."""
+    """Sample plays so the UI works before fortress-api is wired. Each play is
+    tuned to a different rating tier so the rating system is visible in demo
+    mode without having to wait for live market conditions."""
     return [
+        # 🔥 amazing: high POP, deep buffer, low delta
         {
-            "id": "GOOGL-PCS-260",
-            "ticker": "GOOGL",
+            "id": "SPY-PCS-540",
+            "ticker": "SPY",
             "strategy": "PUT_CREDIT_SPREAD",
-            "shortStrike": 260.0,
-            "longStrike": 255.0,
+            "shortStrike": 540.0,
+            "longStrike": 535.0,
             "expiration": "2026-07-13",
             "dte": 13,
-            "estimatedCreditPerContract": 0.42,
-            "safetyBufferPct": 0.063,
-            "underlyingPrice": 277.4,
-            "probabilityOfProfit": 0.73,
-            "ivRank": 0.48,
+            "estimatedCreditPerContract": 0.45,
+            "safetyBufferPct": 0.105,
+            "underlyingPrice": 603.4,
+            "probabilityOfProfit": 0.88,
+            "shortDelta": 0.10,
+            "ivRank": 0.52,
             "earningsClear": True,
             "demo": True,
         },
+        # 👍 ok: solid but not exceptional
         {
-            "id": "AMZN-PCS-250",
-            "ticker": "AMZN",
+            "id": "QQQ-PCS-470",
+            "ticker": "QQQ",
             "strategy": "PUT_CREDIT_SPREAD",
-            "shortStrike": 250.0,
-            "longStrike": 245.0,
+            "shortStrike": 470.0,
+            "longStrike": 465.0,
             "expiration": "2026-07-13",
             "dte": 13,
-            "estimatedCreditPerContract": 0.40,
-            "safetyBufferPct": 0.069,
-            "underlyingPrice": 268.5,
-            "probabilityOfProfit": 0.75,
-            "ivRank": 0.51,
-            "earningsClear": True,
-            "demo": True,
-        },
-        {
-            "id": "AAPL-CSP-200",
-            "ticker": "AAPL",
-            "strategy": "CASH_SECURED_PUT",
-            "shortStrike": 200.0,
-            "longStrike": 0.0,
-            "expiration": "2026-07-13",
-            "dte": 13,
-            "estimatedCreditPerContract": 1.85,
-            "safetyBufferPct": 0.082,
-            "underlyingPrice": 217.9,
+            "estimatedCreditPerContract": 0.55,
+            "safetyBufferPct": 0.075,
+            "underlyingPrice": 508.0,
             "probabilityOfProfit": 0.79,
-            "ivRank": 0.42,
+            "shortDelta": 0.16,
+            "ivRank": 0.46,
+            "earningsClear": True,
+            "demo": True,
+        },
+        # ⚠ risky: thin buffer, low POP
+        {
+            "id": "IWM-PCS-205",
+            "ticker": "IWM",
+            "strategy": "PUT_CREDIT_SPREAD",
+            "shortStrike": 205.0,
+            "longStrike": 200.0,
+            "expiration": "2026-07-13",
+            "dte": 13,
+            "estimatedCreditPerContract": 0.85,
+            "safetyBufferPct": 0.045,
+            "underlyingPrice": 214.7,
+            "probabilityOfProfit": 0.66,
+            "shortDelta": 0.28,
+            "ivRank": 0.51,
             "earningsClear": True,
             "demo": True,
         },
@@ -723,6 +731,17 @@ INDEX_HTML = r"""<!doctype html>
   .src-none { background: rgba(139,148,158,0.10); color: var(--muted); border:1px solid var(--border); }
   .src-ok   { background: rgba(74,222,128,0.10); color: var(--green); border:1px solid rgba(74,222,128,0.35); }
 
+  /* Play rating badges */
+  .rate-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+    margin-left: 10px; cursor: help;
+  }
+  .rate-fire { background: rgba(255,153,51,0.12); color: var(--orange); border:1px solid rgba(255,153,51,0.40); }
+  .rate-ok   { background: rgba(74,222,128,0.10); color: var(--green);  border:1px solid rgba(74,222,128,0.35); }
+  .rate-risk { background: rgba(248,113,113,0.10); color: var(--red);   border:1px solid rgba(248,113,113,0.40); }
+
   /* ─── Bottom nav ─── */
   nav.tabs {
     position: fixed; bottom: 0; left: 0; right: 0;
@@ -983,11 +1002,32 @@ function renderPlayList(plays, isDemo) {
   attachLongPress();
 }
 
+// Play rating: three explicit tiers based on probability-of-profit, safety
+// buffer, and short-leg delta. Pure UI judgment — the scanner already
+// dropped anything genuinely unsafe before it reached this code.
+function ratePlay(p) {
+  const pop = p.probabilityOfProfit || 0;
+  const buf = p.safetyBufferPct || 0;
+  const delta = (p.shortDelta != null) ? Math.abs(p.shortDelta) : (1 - pop);
+
+  // 🔥 amazing: deep buffer, high POP, low delta — premium worth taking.
+  if (pop >= 0.85 && buf >= 0.10 && delta <= 0.12) {
+    return {emoji: '🔥', tag: 'AMAZING', cls: 'rate-fire', tip: 'Deep buffer, high probability of profit, low delta — premium worth taking.'};
+  }
+  // 👍 ok: solid but not exceptional.
+  if (pop >= 0.75 && buf >= 0.07 && delta <= 0.18) {
+    return {emoji: '👍', tag: 'OK', cls: 'rate-ok', tip: 'Probability and buffer are reasonable. Standard play.'};
+  }
+  // ⚠ risky: anything weaker — caller should think twice.
+  return {emoji: '⚠', tag: 'RISKY', cls: 'rate-risk', tip: 'Thin buffer or low probability — proceed with caution.'};
+}
+
 function playCard(p) {
   const cushion = Math.round((p.safetyBufferPct || 0) * 1000) / 10;
   const credit = p.estimatedCreditPerContract || 0;
   const profitDollars = credit * 100;
-  const isHot = (p.ivRank || 0) >= 0.45 && (p.probabilityOfProfit || 0) >= 0.7;
+  const rating = ratePlay(p);
+  const isHot = rating.tag === 'AMAZING';
   const margin = computeMargin(p);
   const ivPct = Math.round((p.ivRank || 0) * 100);
 
@@ -996,7 +1036,10 @@ function playCard(p) {
       <div class="card-head">
         <div class="ticker-logo">${escapeHtml(p.ticker.slice(0,1))}</div>
         <div class="ticker-info">
-          <div class="top"><h3>${escapeHtml(p.ticker)}</h3>${isHot ? '<span title="hot play">🔥</span>' : ''}</div>
+          <div class="top">
+            <h3>${escapeHtml(p.ticker)}</h3>
+            <span class="rate-badge ${rating.cls}" title="${escapeHtml(rating.tip)}">${rating.emoji} ${rating.tag}</span>
+          </div>
           <div class="meta">${ucase(strategyLabel(p.strategy))} • Exp: ${escapeHtml(p.expiration)} (${p.dte} DTE)</div>
         </div>
         <button class="gtc-btn" onclick="event.stopPropagation()">GTC close</button>
