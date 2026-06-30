@@ -157,6 +157,24 @@ def _backend_settings() -> tuple[str, str]:
         )
 
 
+def _backend_headers() -> dict:
+    """Auth + Alpaca creds to forward to fortress-api on every /v1/* call."""
+    with _config_lock:
+        token = app_config.get("fortress_api_token", "")
+        ak = app_config.get("alpaca_api_key", "")
+        as_ = app_config.get("alpaca_api_secret", "")
+        paper = bool(app_config.get("alpaca_paper", True))
+    headers = {"Authorization": f"Bearer {token}"}
+    if ak:
+        headers["X-Alpaca-Key"] = ak
+    if as_:
+        headers["X-Alpaca-Secret"] = as_
+    # Always pin paper/live explicitly so a typo in env vars can't accidentally
+    # arm a live order. Defaults true → paper.
+    headers["X-Alpaca-Paper"] = "true" if paper else "false"
+    return headers
+
+
 def _cached_fetch(key: str, fetcher) -> tuple[Any, bool]:
     now = time.monotonic()
     with _cache_lock:
@@ -186,7 +204,7 @@ def fetch_scan(capital: int) -> list[dict]:
         resp = requests.get(
             f"{url}/v1/radar/scan",
             params={"capital": capital},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=_backend_headers(),
             timeout=BACKEND_TIMEOUT,
         )
         resp.raise_for_status()
@@ -208,7 +226,7 @@ def fetch_positions() -> list[dict]:
     def _do():
         resp = requests.get(
             f"{url}/v1/armory/positions",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=_backend_headers(),
             timeout=BACKEND_TIMEOUT,
         )
         resp.raise_for_status()
