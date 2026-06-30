@@ -89,6 +89,30 @@ def _save_config(cfg: dict) -> None:
         json.dump(cfg, f, indent=4)
 
 
+# Tracks which keys came from the environment at boot vs. which were saved
+# later via /api/config. The Settings UI uses this so the user can tell at a
+# glance whether a value will survive a container restart (env = durable,
+# disk = ephemeral on Render free tier).
+_env_keys_at_boot: set[str] = set()
+
+
+def _record_env_keys() -> None:
+    for env, cfg_key in (
+        ("TELEGRAM_BOT_TOKEN", "telegram_bot_token"),
+        ("TELEGRAM_CHAT_ID", "telegram_chat_ids"),
+        ("FORTRESS_API_URL", "fortress_api_url"),
+        ("FORTRESS_API_TOKEN", "fortress_api_token"),
+        ("ALPACA_API_KEY", "alpaca_api_key"),
+        ("ALPACA_API_SECRET", "alpaca_api_secret"),
+        ("ALPACA_PAPER", "alpaca_paper"),
+    ):
+        if os.environ.get(env):
+            _env_keys_at_boot.add(cfg_key)
+
+
+_record_env_keys()
+
+
 def _parse_chat_ids(raw: str) -> list[str]:
     return [p.strip() for p in (raw or "").split(",") if p.strip()]
 
@@ -429,20 +453,38 @@ def api_config():
     # never echo full secrets back to the browser — mask them
     def mask(v: str) -> str:
         return f"{v[:6]}…{v[-4:]}" if v and len(v) > 12 else ("set" if v else "")
+
+    def source(key: str) -> str:
+        """Where this value lives — guides the UX about persistence:
+            env  → set as a host env var → durable across container restarts
+            disk → saved through /api/config → lost on Render free spin-down
+            none → not set
+        """
+        present = bool(cfg.get(key))
+        if not present:
+            return "none"
+        return "env" if key in _env_keys_at_boot else "disk"
+
     return jsonify({
         "telegram_bot_token_masked": mask(cfg.get("telegram_bot_token", "")),
         "telegram_bot_token_present": bool(cfg.get("telegram_bot_token")),
+        "telegram_bot_token_source": source("telegram_bot_token"),
         "telegram_chat_ids": cfg.get("telegram_chat_ids", ""),
+        "telegram_chat_ids_source": source("telegram_chat_ids"),
         "telegram_enabled": bool(cfg.get("telegram_enabled", True)),
         "fortress_api_url": cfg.get("fortress_api_url", ""),
+        "fortress_api_url_source": source("fortress_api_url"),
         "fortress_api_token_masked": mask(cfg.get("fortress_api_token", "")),
         "fortress_api_token_present": bool(cfg.get("fortress_api_token")),
+        "fortress_api_token_source": source("fortress_api_token"),
         "scan_capital": cfg.get("scan_capital", 5000),
         "backend_connected": bool(cfg.get("fortress_api_url") and cfg.get("fortress_api_token")),
         "alpaca_api_key_masked": mask(cfg.get("alpaca_api_key", "")),
         "alpaca_api_key_present": bool(cfg.get("alpaca_api_key")),
+        "alpaca_api_key_source": source("alpaca_api_key"),
         "alpaca_api_secret_masked": mask(cfg.get("alpaca_api_secret", "")),
         "alpaca_api_secret_present": bool(cfg.get("alpaca_api_secret")),
+        "alpaca_api_secret_source": source("alpaca_api_secret"),
         "alpaca_paper": bool(cfg.get("alpaca_paper", True)),
     })
 
@@ -670,6 +712,16 @@ INDEX_HTML = r"""<!doctype html>
     padding: 6px 10px; border-radius: 6px;
     margin-bottom: 12px; letter-spacing: 0.2px;
   }
+  .src-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; margin-left: 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    vertical-align: middle;
+  }
+  .src-env  { background: rgba(74,222,128,0.10); color: var(--green); border:1px solid rgba(74,222,128,0.35); }
+  .src-disk { background: rgba(255,215,0,0.08);  color: var(--gold);  border:1px solid rgba(255,215,0,0.30); }
+  .src-none { background: rgba(139,148,158,0.10); color: var(--muted); border:1px solid var(--border); }
+  .src-ok   { background: rgba(74,222,128,0.10); color: var(--green); border:1px solid rgba(74,222,128,0.35); }
 
   /* ─── Bottom nav ─── */
   nav.tabs {
@@ -1337,47 +1389,74 @@ async function refreshFeed() {
 async function renderSettings() {
   const r = await fetch("/api/config");
   const cfg = await r.json();
+
+  // Source pill: "env" = durable (set as host env var), "disk" = saved locally
+  // (resets on container restart — Render free tier is ephemeral), "none" = blank.
+  const pill = (src, masked) => {
+    if (src === "env")  return `<span class="src-pill src-env">env · durable · ${escapeHtml(masked||"set")}</span>`;
+    if (src === "disk") return `<span class="src-pill src-disk">saved · ${escapeHtml(masked||"set")} · resets on cold start</span>`;
+    return `<span class="src-pill src-none">not set</span>`;
+  };
+
+  // Any field saved to disk (not env) is at risk on Render free tier.
+  const onDisk = [
+    cfg.alpaca_api_key_source, cfg.alpaca_api_secret_source,
+    cfg.fortress_api_token_source, cfg.telegram_bot_token_source,
+  ].includes("disk");
+
   $("#tab-content").innerHTML = `
     <div class="settings">
+      ${onDisk ? `<div class="demo-banner" style="margin-bottom:16px;">⚠ One or more secrets are saved on disk only. On Render's free tier the container's filesystem resets on cold start (~15 min of inactivity). For durability, paste the same values into the service's <strong>Environment</strong> tab on Render.</div>` : ""}
+
       <div class="section">
-        <h3>Fortress Backend</h3>
+        <h3>Fortress Backend ${cfg.backend_connected ? '<span class="src-pill src-ok">✓ connected</span>' : '<span class="src-pill src-none">not connected</span>'}</h3>
         <p class="desc">Connect to your existing fortress-api service so the Plays and Positions tabs show live data. Falls back to demo data when blank.</p>
-        <label>Backend URL</label>
+
+        <label>Backend URL ${pill(cfg.fortress_api_url_source, cfg.fortress_api_url)}</label>
         <input type="text" id="api-url" value="${escapeHtml(cfg.fortress_api_url)}" placeholder="https://fortress-api.onrender.com">
-        <label>Backend Token (FORTRESS_API_TOKEN)</label>
-        <input type="text" id="api-token" value="" placeholder="${cfg.fortress_api_token_present ? cfg.fortress_api_token_masked + ' — leave blank to keep current' : '(not set)'}">
+
+        <label>Backend Token ${pill(cfg.fortress_api_token_source, cfg.fortress_api_token_masked)}</label>
+        <input type="text" id="api-token" value="" placeholder="${cfg.fortress_api_token_present ? 'leave blank to keep current value above' : '(not set)'}">
+
         <label>Scan Capital</label>
         <input type="number" id="scan-capital" value="${cfg.scan_capital}" min="100" step="100">
+
         <div class="save-row">
           <button class="btn btn-primary" data-section="backend">Save Backend</button>
-          <span class="status">${cfg.backend_connected ? 'Connected.' : 'Not connected — demo data in use.'}</span>
+          <span class="status"></span>
         </div>
       </div>
 
       <div class="section">
-        <h3>Alpaca Broker</h3>
-        <p class="desc">Your Alpaca paper/live trading credentials. <strong>Note:</strong> the actual broker calls happen on the fortress-api service — for live data you also need to paste these into <code>ALPACA_API_KEY</code> / <code>ALPACA_API_SECRET</code> on the fortress-api Render service. Saving here keeps them in one place for reference.</p>
-        <label>Alpaca API Key</label>
-        <input type="text" id="alpaca-key" value="" placeholder="${cfg.alpaca_api_key_present ? cfg.alpaca_api_key_masked + ' — leave blank to keep current' : '(not set)'}">
-        <label>Alpaca API Secret</label>
-        <input type="text" id="alpaca-secret" value="" placeholder="${cfg.alpaca_api_secret_present ? cfg.alpaca_api_secret_masked + ' — leave blank to keep current' : '(not set)'}">
+        <h3>Alpaca Broker ${cfg.alpaca_api_key_present && cfg.alpaca_api_secret_present ? `<span class="src-pill src-ok">✓ ${cfg.alpaca_paper ? 'paper' : '<strong style="color:#ff5c5c">LIVE</strong>'}</span>` : '<span class="src-pill src-none">not configured</span>'}</h3>
+        <p class="desc">Your Alpaca trading credentials. The companion forwards these to fortress-api on every request so the same scanner uses your account.</p>
+
+        <label>Alpaca API Key ${pill(cfg.alpaca_api_key_source, cfg.alpaca_api_key_masked)}</label>
+        <input type="text" id="alpaca-key" value="" placeholder="${cfg.alpaca_api_key_present ? 'leave blank to keep current value above' : 'PKABCD... (from alpaca.markets/dashboard)'}">
+
+        <label>Alpaca API Secret ${pill(cfg.alpaca_api_secret_source, cfg.alpaca_api_secret_masked)}</label>
+        <input type="text" id="alpaca-secret" value="" placeholder="${cfg.alpaca_api_secret_present ? 'leave blank to keep current value above' : '(not set)'}">
+
         <div class="row">
           <input type="checkbox" id="alpaca-paper" ${cfg.alpaca_paper ? 'checked' : ''}>
-          <label for="alpaca-paper">Paper trading (safe default — uncheck only when you're sure you want real-money orders)</label>
+          <label for="alpaca-paper">Paper trading (safe default — uncheck only when you want real-money orders)</label>
         </div>
         <div class="save-row">
           <button class="btn btn-primary" data-section="alpaca">Save Alpaca</button>
-          <span class="status">${cfg.alpaca_api_key_present && cfg.alpaca_api_secret_present ? (cfg.alpaca_paper ? 'Saved · paper mode.' : 'Saved · LIVE mode.') : 'Not configured.'}</span>
+          <span class="status"></span>
         </div>
       </div>
 
       <div class="section">
-        <h3>Telegram Bridge</h3>
+        <h3>Telegram Bridge ${cfg.telegram_bot_token_present ? '<span class="src-pill src-ok">✓ bot set</span>' : '<span class="src-pill src-none">not configured</span>'}</h3>
         <p class="desc">When enabled, every alert (test or auto) is delivered to every chat ID listed.</p>
-        <label>Bot Token (@BotFather)</label>
-        <input type="text" id="tg-token" value="" placeholder="${cfg.telegram_bot_token_present ? cfg.telegram_bot_token_masked + ' — leave blank to keep current' : '(not set)'}">
-        <label>Chat IDs (comma-separated)</label>
+
+        <label>Bot Token ${pill(cfg.telegram_bot_token_source, cfg.telegram_bot_token_masked)}</label>
+        <input type="text" id="tg-token" value="" placeholder="${cfg.telegram_bot_token_present ? 'leave blank to keep current value above' : '@BotFather token'}">
+
+        <label>Chat IDs (comma-separated) ${cfg.telegram_chat_ids_source === 'env' ? '<span class="src-pill src-env">env · durable</span>' : (cfg.telegram_chat_ids ? '<span class="src-pill src-disk">saved · resets on cold start</span>' : '')}</label>
         <textarea id="tg-chats" placeholder="-1001234567890, 987654321">${escapeHtml(cfg.telegram_chat_ids)}</textarea>
+
         <div class="row">
           <input type="checkbox" id="tg-enabled" ${cfg.telegram_enabled ? 'checked' : ''}>
           <label for="tg-enabled">Send alerts to Telegram (when off, alerts appear on Alerts tab only)</label>
@@ -1415,11 +1494,31 @@ async function saveSettings(section, btn) {
   }
   btn.disabled = true;
   try {
-    await fetch("/api/config", { method:"POST",
+    const resp = await fetch("/api/config", { method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    const data = await resp.json();
     const status = btn.parentElement.querySelector(".status");
-    status.textContent = "Saved.";
-    setTimeout(() => renderSettings(), 800);
+    // Build a concrete confirmation showing what landed where.
+    let parts = [];
+    if (section === "backend") {
+      parts.push(`URL: ${data.fortress_api_url || '(blank)'}`);
+      parts.push(`Token: ${data.fortress_api_token_present ? data.fortress_api_token_masked : '(blank)'}`);
+    } else if (section === "alpaca") {
+      parts.push(`Key: ${data.alpaca_api_key_present ? data.alpaca_api_key_masked : '(blank)'}`);
+      parts.push(`Secret: ${data.alpaca_api_secret_present ? data.alpaca_api_secret_masked : '(blank)'}`);
+      parts.push(`Paper: ${data.alpaca_paper}`);
+    } else {
+      parts.push(`Token: ${data.telegram_bot_token_present ? data.telegram_bot_token_masked : '(blank)'}`);
+      parts.push(`Chats: ${data.telegram_chat_ids || '(none)'}`);
+      parts.push(`Enabled: ${data.telegram_enabled}`);
+    }
+    status.innerHTML = `<strong style="color:var(--green)">✓ Saved.</strong> ${escapeHtml(parts.join(" · "))}`;
+    // Re-render after 2.5s so the user has time to read the confirmation;
+    // the re-rendered Settings tab then shows the new "saved · masked" pills.
+    setTimeout(() => renderSettings(), 2500);
+  } catch (e) {
+    btn.parentElement.querySelector(".status").innerHTML =
+      `<strong style="color:var(--red)">✗ Save failed:</strong> ${escapeHtml(String(e))}`;
   } finally { btn.disabled = false; }
 }
 
