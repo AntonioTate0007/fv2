@@ -607,6 +607,39 @@ def has_earnings_in_window(ticker: str, today: date, expiry: date,
     return False
 
 
+def get_earnings_calendar(tickers: list[str],
+                          blackout_days: int = EARNINGS_BLACKOUT_DAYS) -> list[dict]:
+    """Earnings status snapshot for the given tickers. Returns one entry per
+    requested ticker — order preserved — including:
+        - nextEarningsDate : ISO date or null
+        - daysUntil        : int or null
+        - withinBlackout   : True iff the next earnings falls in the next
+                             `blackout_days` (i.e. would block any new trade
+                             whose cycle ends inside the window)
+        - isEtf            : True for SPY/QQQ/IWM (and therefore always clear)
+    Used by the companion's Earnings tab and position blackout badges.
+    """
+    today = date.today()
+    out: list[dict] = []
+    for raw in tickers:
+        ticker = (raw or "").strip().upper()
+        if not ticker:
+            continue
+        is_etf = ticker in ETF_NO_EARNINGS
+        dates = [] if is_etf else _next_earnings_dates(ticker)
+        next_d = dates[0] if dates else None
+        days_until = (next_d - today).days if next_d else None
+        within = bool(next_d and days_until is not None and 0 <= days_until <= blackout_days)
+        out.append({
+            "ticker": ticker,
+            "nextEarningsDate": next_d.isoformat() if next_d else None,
+            "daysUntil": days_until,
+            "withinBlackout": within,
+            "isEtf": is_etf,
+        })
+    return out
+
+
 # ── Scanner ─────────────────────────────────────────────────────────────────────
 
 def scan_chains(capital: int) -> list[dict]:

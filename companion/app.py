@@ -240,6 +240,57 @@ def fetch_positions() -> list[dict]:
         return _demo_positions()
 
 
+def fetch_earnings(tickers: list[str]) -> dict:
+    """Earnings-blackout gate snapshot for the given tickers. Demo data when
+    fortress-api isn't wired so the Earnings tab is never blank."""
+    url, token = _backend_settings()
+    cleaned = [t.strip().upper() for t in tickers if t and t.strip()]
+    if not cleaned:
+        return {"items": [], "blackoutDays": 7, "asOf": None, "demo": False}
+    if not url or not token:
+        return _demo_earnings(cleaned)
+
+    def _do():
+        resp = requests.get(
+            f"{url}/v1/earnings",
+            params={"tickers": ",".join(cleaned)},
+            headers=_backend_headers(),
+            timeout=BACKEND_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    try:
+        data, _ = _cached_fetch(f"earnings:{','.join(cleaned)}", _do)
+        data.setdefault("demo", False)
+        return data
+    except requests.RequestException as e:
+        add_log(f"ERR: backend earnings — {e}", "error")
+        return _demo_earnings(cleaned)
+
+
+def _demo_earnings(tickers: list[str]) -> dict:
+    """Pretend-calendar: ETFs are always clear, every other ticker gets a
+    fake next-earnings date 9 days out (puts them inside the 7-day blackout
+    visualization so the gate UI is recognizable in demo mode)."""
+    today = datetime.now(timezone.utc).date()
+    items = []
+    etfs = {"SPY", "QQQ", "IWM"}
+    for t in tickers:
+        is_etf = t in etfs
+        if is_etf:
+            items.append({"ticker": t, "nextEarningsDate": None, "daysUntil": None,
+                          "withinBlackout": False, "isEtf": True})
+        else:
+            d = today.replace(day=1).replace(day=min(28, today.day))  # stable demo date
+            from datetime import timedelta as _td
+            nd = today + _td(days=9)
+            items.append({"ticker": t, "nextEarningsDate": nd.isoformat(),
+                          "daysUntil": 9, "withinBlackout": False, "isEtf": False})
+    return {"items": items, "blackoutDays": 7,
+            "asOf": datetime.now(timezone.utc).isoformat(), "demo": True}
+
+
 def _demo_scan() -> list[dict]:
     """Sample plays so the UI works before fortress-api is wired."""
     return [
@@ -414,6 +465,16 @@ def api_positions():
 @app.route("/api/market")
 def api_market():
     return jsonify(market_summary())
+
+
+@app.route("/api/earnings")
+def api_earnings():
+    """Earnings-blackout gate. Caller hands us the ticker list (universe +
+    held positions); we proxy the calendar lookup to fortress-api. The
+    universe defaults to SPY/QQQ/IWM if no ?tickers= param is given."""
+    raw = request.args.get("tickers", "")
+    tickers = [t for t in raw.split(",") if t.strip()] or ["SPY", "QQQ", "IWM"]
+    return jsonify(fetch_earnings(tickers))
 
 
 @app.route("/api/alert", methods=["POST"])
@@ -600,6 +661,14 @@ INDEX_HTML = r"""<!doctype html>
     margin: 12px; padding: 10px 14px; background: rgba(255,153,51,0.08);
     border: 1px solid rgba(255,153,51,0.3); color: var(--orange);
     border-radius: 8px; font-size: 13px;
+  }
+  .ern-badge {
+    background: rgba(248,113,113,0.10);
+    border: 1px solid rgba(248,113,113,0.45);
+    color: var(--red);
+    font-size: 12.5px; font-weight: 700;
+    padding: 6px 10px; border-radius: 6px;
+    margin-bottom: 12px; letter-spacing: 0.2px;
   }
 
   /* ─── Bottom nav ─── */
@@ -1104,19 +1173,31 @@ async function renderPositions() {
       list.innerHTML = `<div class="empty">No open positions.</div>`;
       return;
     }
+
+    // Cross-check the held tickers against the earnings gate so cards can
+    // surface the warning before the user has to switch tabs.
+    const heldTickers = data.positions.map(p => p.ticker);
+    const ern = await fetch(`/api/earnings?tickers=${encodeURIComponent(heldTickers.join(","))}`)
+      .then(r => r.json()).catch(() => ({items:[]}));
+    const ernByTicker = Object.fromEntries((ern.items || []).map(i => [i.ticker, i]));
+
     list.innerHTML = (data.positions[0]?.demo
       ? `<div class="demo-banner">⚠ Demo data — wire backend in Settings for live positions.</div>`
       : "")
-      + data.positions.map(positionCard).join("");
+      + data.positions.map(p => positionCard(p, ernByTicker[p.ticker])).join("");
   } catch (e) {
     $("#pos-list").innerHTML = `<div class="empty">Could not load positions.</div>`;
   }
 }
 
-function positionCard(p) {
+function positionCard(p, ern) {
   const profit = (p.entryPremium - p.currentPremium) / (p.entryPremium || 1);
   const profitDollars = (p.entryPremium - p.currentPremium) * 100 * (p.contracts || 1);
+  const ernBadge = (ern && ern.withinBlackout)
+    ? `<div class="ern-badge">⚠ Earnings in ${ern.daysUntil}d — gate flagged</div>`
+    : "";
   return `<div class="card">
+    ${ernBadge}
     <div class="card-head">
       <div class="ticker-logo">${escapeHtml(p.ticker.slice(0,1))}</div>
       <div class="ticker-info">
@@ -1142,14 +1223,82 @@ function positionCard(p) {
   </div>`;
 }
 
-// ─── Earnings (stub) ────────────────────────────────────────────────────────
-function renderEarnings() {
-  $("#tab-content").innerHTML = `
-    <div class="section-bar">Earnings Calendar</div>
-    <div class="empty">
-      Earnings feed not wired yet.<br>
-      Plays carry an <em>earningsClear</em> flag that the Plays tab uses to label "Normal Cycle Expiry".
-    </div>`;
+// ─── Earnings — Automated Blackout Gate ─────────────────────────────────────
+async function renderEarnings() {
+  const el = $("#tab-content");
+  el.innerHTML = `
+    <div class="section-bar">
+      Automated Earnings Blackout Gate
+      <div class="actions"><button class="scan" id="btn-ern-refresh">Refresh</button></div>
+    </div>
+    <div id="ern-list" class="empty">Loading…</div>`;
+  $("#btn-ern-refresh").addEventListener("click", loadEarnings);
+  await loadEarnings();
+}
+
+async function loadEarnings() {
+  const list = $("#ern-list");
+  list.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    // Universe (SPY/QQQ/IWM) ∪ tickers from currently held positions.
+    const posResp = await fetch("/api/positions").then(r => r.json()).catch(() => ({positions:[]}));
+    const heldTickers = (posResp.positions || []).map(p => p.ticker);
+    const universe = ["SPY","QQQ","IWM"];
+    const all = Array.from(new Set([...universe, ...heldTickers])).filter(Boolean);
+    const data = await fetch(`/api/earnings?tickers=${encodeURIComponent(all.join(","))}`).then(r => r.json());
+
+    const items = data.items || [];
+    const blocked = items.filter(i => i.withinBlackout).length;
+    const clear = items.filter(i => !i.withinBlackout).length;
+
+    const banner = data.demo
+      ? `<div class="demo-banner">⚠ Demo data — wire backend in Settings to pull real earnings dates.</div>`
+      : "";
+
+    list.innerHTML = banner + `
+      <div class="card" style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0;">
+        <div style="text-align:center; padding:10px; border-right:1px solid var(--border);">
+          <div class="muted" style="font-size:11px; text-transform:uppercase;">Gate Status</div>
+          <div class="value ${blocked>0?'orange':'green'}" style="font-size:18px; font-weight:700; margin-top:6px;">
+            ${blocked>0 ? `${blocked} BLOCKED` : 'ALL CLEAR'}
+          </div>
+        </div>
+        <div style="text-align:center; padding:10px; border-right:1px solid var(--border);">
+          <div class="muted" style="font-size:11px; text-transform:uppercase;">Monitored</div>
+          <div class="value" style="font-size:18px; font-weight:700; margin-top:6px;">${items.length}</div>
+        </div>
+        <div style="text-align:center; padding:10px;">
+          <div class="muted" style="font-size:11px; text-transform:uppercase;">Blackout Window</div>
+          <div class="value gold" style="font-size:18px; font-weight:700; margin-top:6px;">${data.blackoutDays}d</div>
+        </div>
+      </div>` +
+      items.map(earningsRow).join("");
+  } catch (e) {
+    list.innerHTML = `<div class="empty">Could not load earnings calendar.</div>`;
+  }
+}
+
+function earningsRow(item) {
+  const cleared = !item.withinBlackout;
+  const statusClass = item.isEtf ? "muted" : (cleared ? "green" : "orange");
+  const statusText = item.isEtf
+    ? "ETF · no earnings"
+    : (cleared ? "CLEAR" : "BLACKED OUT");
+  const dateText = item.nextEarningsDate
+    ? `${item.nextEarningsDate} (${item.daysUntil}d)`
+    : "—";
+  return `<div class="card" style="padding:14px;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div class="ticker-logo">${escapeHtml(item.ticker.slice(0,1))}</div>
+      <div style="flex:1;">
+        <div style="font-size:17px; font-weight:700;">${escapeHtml(item.ticker)}</div>
+        <div class="muted" style="font-size:12px; margin-top:2px;">
+          Next earnings: ${escapeHtml(dateText)}
+        </div>
+      </div>
+      <div class="${statusClass}" style="font-weight:700; font-size:13px;">${statusText}</div>
+    </div>
+  </div>`;
 }
 
 // ─── Alerts ─────────────────────────────────────────────────────────────────
