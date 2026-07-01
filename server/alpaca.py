@@ -63,8 +63,8 @@ except ImportError:  # SDK not installed → routes fall back to mock data.
 
 UNDERLYINGS = ["SPY", "QQQ", "IWM"]   # v1.2: broad-market ETF whitelist
 ETF_NO_EARNINGS = {"SPY", "QQQ", "IWM"}  # short-circuit for the earnings check
-TARGET_DTE_LO = 7
-TARGET_DTE_HI = 14
+TARGET_DTE_LO = 14   # matches the Fortress "14-45 days" spec
+TARGET_DTE_HI = 45
 MIN_OTM_BUFFER = 0.10   # v1.2: short strike must sit ≥10% below spot for puts
 SPREAD_WIDTH = 5.0      # default $5 wide for credit spreads
 
