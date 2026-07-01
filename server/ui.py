@@ -1548,20 +1548,12 @@ async function renderSettings() {
       ${onDisk ? `<div class="demo-banner" style="margin-bottom:16px;">⚠ One or more secrets are saved on disk only. On Render's free tier the container's filesystem resets on cold start (~15 min of inactivity). For durability, paste the same values into the service's <strong>Environment</strong> tab on Render.</div>` : ""}
 
       <div class="section">
-        <h3>Fortress Backend ${cfg.backend_connected ? '<span class="src-pill src-ok">✓ connected</span>' : '<span class="src-pill src-none">not connected</span>'}</h3>
-        <p class="desc">Connect to your existing fortress-api service so the Plays and Positions tabs show live data. Falls back to demo data when blank.</p>
-
-        <label>Backend URL ${pill(cfg.fortress_api_url_source, cfg.fortress_api_url)}</label>
-        <input type="text" id="api-url" value="${escapeHtml(cfg.fortress_api_url)}" placeholder="https://fortress-api.onrender.com">
-
-        <label>Backend Token ${pill(cfg.fortress_api_token_source, cfg.fortress_api_token_masked)}</label>
-        <input type="text" id="api-token" value="" placeholder="${cfg.fortress_api_token_present ? 'leave blank to keep current value above' : '(not set)'}">
-
+        <h3>Scanner</h3>
+        <p class="desc">Sizing knob for the scan. Applied to Plays on the next refresh.</p>
         <label>Scan Capital</label>
         <input type="number" id="scan-capital" value="${cfg.scan_capital}" min="100" step="100">
-
         <div class="save-row">
-          <button class="btn btn-primary" data-section="backend">Save Backend</button>
+          <button class="btn btn-primary" data-section="scanner">Save Scanner</button>
           <span class="status"></span>
         </div>
       </div>
@@ -1631,11 +1623,8 @@ async function renderSettings() {
 
 async function saveSettings(section, btn) {
   const payload = {};
-  if (section === "backend") {
-    payload.fortress_api_url = $("#api-url").value;
+  if (section === "scanner") {
     payload.scan_capital = $("#scan-capital").value;
-    const t = $("#api-token").value.trim();
-    if (t) payload.fortress_api_token = t;
   } else if (section === "telegram") {
     const t = $("#tg-token").value.trim();
     if (t) payload.telegram_bot_token = t;
@@ -1660,9 +1649,8 @@ async function saveSettings(section, btn) {
     const status = btn.parentElement.querySelector(".status");
     // Build a concrete confirmation showing what landed where.
     let parts = [];
-    if (section === "backend") {
-      parts.push(`URL: ${data.fortress_api_url || '(blank)'}`);
-      parts.push(`Token: ${data.fortress_api_token_present ? data.fortress_api_token_masked : '(blank)'}`);
+    if (section === "scanner") {
+      parts.push(`Scan capital: $${data.scan_capital}`);
     } else if (section === "alpaca") {
       parts.push(`Key: ${data.alpaca_api_key_present ? data.alpaca_api_key_masked : '(blank)'}`);
       parts.push(`Secret: ${data.alpaca_api_secret_present ? data.alpaca_api_secret_masked : '(blank)'}`);
