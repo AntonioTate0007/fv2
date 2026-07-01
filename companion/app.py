@@ -71,6 +71,8 @@ def _load_config() -> dict:
         "alpaca_api_key": os.environ.get("ALPACA_API_KEY", ""),
         "alpaca_api_secret": os.environ.get("ALPACA_API_SECRET", ""),
         "alpaca_paper": (os.environ.get("ALPACA_PAPER", "true").lower() != "false"),
+        "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
+        "gemini_enabled": True,
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -105,6 +107,7 @@ def _record_env_keys() -> None:
         ("ALPACA_API_KEY", "alpaca_api_key"),
         ("ALPACA_API_SECRET", "alpaca_api_secret"),
         ("ALPACA_PAPER", "alpaca_paper"),
+        ("GEMINI_API_KEY", "gemini_api_key"),
     ):
         if os.environ.get(env):
             _env_keys_at_boot.add(cfg_key)
@@ -182,12 +185,14 @@ def _backend_settings() -> tuple[str, str]:
 
 
 def _backend_headers() -> dict:
-    """Auth + Alpaca creds to forward to fortress-api on every /v1/* call."""
+    """Auth + Alpaca + Gemini creds to forward to fortress-api on every /v1/* call."""
     with _config_lock:
         token = app_config.get("fortress_api_token", "")
         ak = app_config.get("alpaca_api_key", "")
         as_ = app_config.get("alpaca_api_secret", "")
         paper = bool(app_config.get("alpaca_paper", True))
+        gk = app_config.get("gemini_api_key", "")
+        gemini_on = bool(app_config.get("gemini_enabled", True))
     headers = {"Authorization": f"Bearer {token}"}
     if ak:
         headers["X-Alpaca-Key"] = ak
@@ -196,6 +201,10 @@ def _backend_headers() -> dict:
     # Always pin paper/live explicitly so a typo in env vars can't accidentally
     # arm a live order. Defaults true → paper.
     headers["X-Alpaca-Paper"] = "true" if paper else "false"
+    # Only forward Gemini key when analysis is enabled — respects the Settings
+    # toggle without wiping the saved key.
+    if gk and gemini_on:
+        headers["X-Gemini-Key"] = gk
     return headers
 
 
@@ -435,6 +444,7 @@ def api_config():
                 "telegram_bot_token", "telegram_chat_ids",
                 "fortress_api_url", "fortress_api_token",
                 "alpaca_api_key", "alpaca_api_secret",
+                "gemini_api_key",
             ):
                 if key in payload:
                     app_config[key] = str(payload[key]).strip()
@@ -442,6 +452,8 @@ def api_config():
                 app_config["telegram_enabled"] = bool(payload["telegram_enabled"])
             if "alpaca_paper" in payload:
                 app_config["alpaca_paper"] = bool(payload["alpaca_paper"])
+            if "gemini_enabled" in payload:
+                app_config["gemini_enabled"] = bool(payload["gemini_enabled"])
             if "scan_capital" in payload:
                 try:
                     app_config["scan_capital"] = max(100, int(payload["scan_capital"]))
@@ -494,6 +506,10 @@ def api_config():
         "alpaca_api_secret_present": bool(cfg.get("alpaca_api_secret")),
         "alpaca_api_secret_source": source("alpaca_api_secret"),
         "alpaca_paper": bool(cfg.get("alpaca_paper", True)),
+        "gemini_api_key_masked": mask(cfg.get("gemini_api_key", "")),
+        "gemini_api_key_present": bool(cfg.get("gemini_api_key")),
+        "gemini_api_key_source": source("gemini_api_key"),
+        "gemini_enabled": bool(cfg.get("gemini_enabled", True)),
     })
 
 
@@ -515,6 +531,46 @@ def api_positions():
 @app.route("/api/market")
 def api_market():
     return jsonify(market_summary())
+
+
+@app.route("/api/analyze/play", methods=["POST"])
+def api_analyze_play():
+    """Proxy per-play AI analysis to fortress-api. Body is the play object as
+    the browser already has it (from /api/scan). Falls back to a deterministic
+    tooltip-style analysis when backend or Gemini isn't wired."""
+    payload = request.get_json(silent=True) or {}
+    url, token = _backend_settings()
+    if not url or not token:
+        return jsonify({"analysis": _local_analysis_fallback(payload), "source": "fallback"})
+
+    try:
+        resp = requests.post(
+            f"{url}/v1/analyze/play",
+            headers=_backend_headers(),
+            json=payload,
+            timeout=BACKEND_TIMEOUT * 2,  # Gemini can be slow — give it room
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except requests.RequestException as e:
+        add_log(f"ERR: analyze/play — {e}", "error")
+        return jsonify({"analysis": _local_analysis_fallback(payload), "source": "fallback"})
+
+
+def _local_analysis_fallback(p: dict) -> str:
+    buf = (p.get("safetyBufferPct") or 0) * 100
+    pop = (p.get("probabilityOfProfit") or 0) * 100
+    rating = (p.get("rating") or "").upper()
+    ticker = p.get("ticker", "this ticker")
+    short = p.get("shortStrike", 0)
+    if rating == "AMAZING":
+        return (f"{ticker} sits {buf:.1f}% above the ${short:.0f} short strike with "
+                f"{pop:.0f}% POP — premium worth taking. Cut on a close under ${short:.0f}.")
+    if rating == "OK":
+        return (f"Standard setup: {buf:.1f}% cushion, {pop:.0f}% POP. Take if you have book "
+                f"capacity; skip if correlated to existing positions.")
+    return (f"Thin buffer ({buf:.1f}%) or low probability ({pop:.0f}%) — skip unless you "
+            f"have a strong directional view on {ticker}.")
 
 
 @app.route("/api/earnings")
@@ -741,6 +797,7 @@ INDEX_HTML = r"""<!doctype html>
   .rate-fire { background: rgba(255,153,51,0.12); color: var(--orange); border:1px solid rgba(255,153,51,0.40); }
   .rate-ok   { background: rgba(74,222,128,0.10); color: var(--green);  border:1px solid rgba(74,222,128,0.35); }
   .rate-risk { background: rgba(248,113,113,0.10); color: var(--red);   border:1px solid rgba(248,113,113,0.40); }
+  .ai-source { color: var(--muted); font-size: 11px; font-style: italic; margin-left: 4px; }
 
   /* ─── Bottom nav ─── */
   nav.tabs {
@@ -1000,6 +1057,34 @@ function renderPlayList(plays, isDemo) {
     : "";
   list.innerHTML = banner + plays.map(playCard).join("");
   attachLongPress();
+  // Fire-and-forget AI analysis per card. Each fetch fills its own ai-box.
+  plays.forEach(p => loadAnalysis(p));
+}
+
+async function loadAnalysis(p) {
+  const rating = ratePlay(p);
+  const payload = { ...p, rating: rating.tag };
+  try {
+    const r = await fetch("/api/analyze/play", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    const box = document.querySelector(`.ai-box[data-ai-for="${cssEscape(p.id)}"]`);
+    if (!box) return;
+    const text = data.analysis || "(no analysis)";
+    const sourceLabel = data.source === "gemini" ? "Gemini"
+                      : data.source === "cache"  ? "Gemini · cached"
+                      : "heuristic";
+    box.querySelector(".ai-text").innerHTML =
+      `${escapeHtml(text)} <span class="ai-source">· ${escapeHtml(sourceLabel)}</span>`;
+  } catch (e) { /* card falls back to loading text; retry on next scan */ }
+}
+
+function cssEscape(s) {
+  // Minimal CSS.escape polyfill for the attribute selector above.
+  return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
 }
 
 // Play rating: three explicit tiers based on probability-of-profit, safety
@@ -1059,11 +1144,13 @@ function playCard(p) {
         <div class="field right"><div class="k">Margin Collateral</div>
           <div class="v orange">${money(margin, 0)}</div></div>
       </div>
-      ${isHot ? `
-      <div class="ai-box">
-        <div class="head"><span class="label">AI Brain Analysis:</span><span class="tag">🔥 HOT PLAY</span></div>
-        <p>${escapeHtml(p.ticker)} has a ${cushion}% downside cushion above the short strike. Premium is attractive relative to delta risk; probability of profit ${pct(p.probabilityOfProfit, 0)}.</p>
-      </div>` : ''}
+      <div class="ai-box" data-ai-for="${escapeHtml(p.id)}">
+        <div class="head">
+          <span class="label">AI Brain Analysis:</span>
+          <span class="tag ${rating.cls}">${rating.emoji} ${rating.tag}</span>
+        </div>
+        <p class="ai-text"><em class="muted">Loading Gemini reasoning…</em></p>
+      </div>
       <div class="card-actions">
         <button class="btn btn-secondary">Re-Analy</button>
         <button class="btn btn-primary">Track Position</button>
@@ -1445,6 +1532,7 @@ async function renderSettings() {
   const onDisk = [
     cfg.alpaca_api_key_source, cfg.alpaca_api_secret_source,
     cfg.fortress_api_token_source, cfg.telegram_bot_token_source,
+    cfg.gemini_api_key_source,
   ].includes("disk");
 
   $("#tab-content").innerHTML = `
@@ -1486,6 +1574,23 @@ async function renderSettings() {
         </div>
         <div class="save-row">
           <button class="btn btn-primary" data-section="alpaca">Save Alpaca</button>
+          <span class="status"></span>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Gemini AI ${cfg.gemini_api_key_present && cfg.gemini_enabled ? '<span class="src-pill src-ok">✓ analyzing</span>' : (cfg.gemini_api_key_present ? '<span class="src-pill src-disk">key saved · off</span>' : '<span class="src-pill src-none">not configured</span>')}</h3>
+        <p class="desc">Powers the per-play AI analysis under each play card. When configured, every scanned play gets a fresh 2–3 sentence Gemini reasoning (why it's worth taking, main risk to watch, one alert level). Falls back to a deterministic heuristic when the key is blank or Gemini is off.</p>
+
+        <label>Gemini API Key ${pill(cfg.gemini_api_key_source, cfg.gemini_api_key_masked)}</label>
+        <input type="text" id="gemini-key" value="" placeholder="${cfg.gemini_api_key_present ? 'leave blank to keep current value above' : 'AIza... (from aistudio.google.com/app/apikey)'}">
+
+        <div class="row">
+          <input type="checkbox" id="gemini-enabled" ${cfg.gemini_enabled ? 'checked' : ''}>
+          <label for="gemini-enabled">Enable AI analysis on play cards (uncheck to save API quota)</label>
+        </div>
+        <div class="save-row">
+          <button class="btn btn-primary" data-section="gemini">Save Gemini</button>
           <span class="status"></span>
         </div>
       </div>
@@ -1534,6 +1639,10 @@ async function saveSettings(section, btn) {
     if (k) payload.alpaca_api_key = k;
     if (s) payload.alpaca_api_secret = s;
     payload.alpaca_paper = $("#alpaca-paper").checked;
+  } else if (section === "gemini") {
+    const g = $("#gemini-key").value.trim();
+    if (g) payload.gemini_api_key = g;
+    payload.gemini_enabled = $("#gemini-enabled").checked;
   }
   btn.disabled = true;
   try {
@@ -1550,6 +1659,9 @@ async function saveSettings(section, btn) {
       parts.push(`Key: ${data.alpaca_api_key_present ? data.alpaca_api_key_masked : '(blank)'}`);
       parts.push(`Secret: ${data.alpaca_api_secret_present ? data.alpaca_api_secret_masked : '(blank)'}`);
       parts.push(`Paper: ${data.alpaca_paper}`);
+    } else if (section === "gemini") {
+      parts.push(`Key: ${data.gemini_api_key_present ? data.gemini_api_key_masked : '(blank)'}`);
+      parts.push(`Enabled: ${data.gemini_enabled}`);
     } else {
       parts.push(`Token: ${data.telegram_bot_token_present ? data.telegram_bot_token_masked : '(blank)'}`);
       parts.push(`Chats: ${data.telegram_chat_ids || '(none)'}`);
