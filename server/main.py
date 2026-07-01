@@ -531,9 +531,9 @@ def _analysis_fallback(p: AnalyzePlayRequest) -> str:
 
 # ── Routes ──────────────────────────────────────────────────────────────────────
 
-@app.get("/")
-def root():
-    """Public status — no auth, just so deploy health-checks pass."""
+@app.get("/status")
+def status_json():
+    """Public status endpoint (was `/` before the UI merge)."""
     al = broker.is_configured()
     return {
         "service": "fortress-api",
@@ -545,6 +545,15 @@ def root():
         "telegram": telegram.is_configured(),
         "tokens_registered": len(FCM_TOKENS),
     }
+
+
+# UI merged in from the (now-removed) companion service — serves the SPA at
+# / plus all /api/* routes. Imported here at the bottom of main so ui.py can
+# import back from main (AnalyzePlayRequest, _analyze_play) without a cycle
+# at module-load time.
+import ui as _ui  # noqa: E402
+app.include_router(_ui.router)
+_ui.start_scheduler()
 
 
 @app.get("/v1/radar/scan",

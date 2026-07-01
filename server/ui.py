@@ -1,35 +1,30 @@
 """
-Fortress Companion v1.1 — cloud edition.
+Merged web UI for Fortress — the former "companion" service, now folded
+into fortress-api so it runs as a single process.
 
-Web companion app that consumes the existing fortress-api backend and
-renders a tabbed dashboard: Plays / Positions / Earnings / Alerts /
-Settings. Long-press on a play opens a Manual Order Instructions modal
-with computed legs + P&L chart.
+Public routes (mounted onto the fortress-api FastAPI app):
+    GET  /                     single-page dashboard (Plays / Positions /
+                               Earnings / Alerts / Settings)
+    GET  /healthz              liveness probe (for Render)
+    GET  /api/scan             deck of currently-monitored plays
+    GET  /api/positions        currently-held options positions
+    GET  /api/earnings         earnings-blackout gate snapshot
+    POST /api/analyze/play     per-play Gemini analysis (2-3 sentence)
+    GET  /api/market           VIX / SPY / premium-sell rating summary
+    GET  /api/config           masked settings snapshot
+    POST /api/config           save runtime settings (Alpaca/Gemini/Telegram)
+    POST /api/alert            fire a test Telegram alert
+    GET  /api/logs             tail of in-memory alerts log
+    POST /api/deck/refresh     manual "Scan Now"
+    POST /api/deck/clear       manual "Clear Deck"
 
-Public routes:
-    /                 single-page app (SPA)
-    /healthz          liveness probe
+All routes are UN-authenticated — this UI IS the public face. If you want
+to add a login, set FORTRESS_UI_PASSWORD (TODO — not yet wired).
 
-Backend proxies (gated by FORTRESS_API_TOKEN, never exposed to browser):
-    /api/scan         → fortress-api GET /v1/radar/scan?capital=N
-    /api/positions    → fortress-api GET /v1/armory/positions
-    /api/market       computed: VIX/SPY/premium-sell-rating (stubbed)
-
-Companion-local:
-    /api/config       GET/POST settings as JSON
-    /api/alert        POST test Telegram alert
-    /api/logs         GET tail of in-memory alerts log
-
-Required env vars (none are strictly required — missing values trigger
-demo data so the UI is always functional):
-    FORTRESS_API_URL          base URL of fortress-api (e.g. https://...onrender.com)
-    FORTRESS_API_TOKEN        bearer token for /v1/* routes
-    TELEGRAM_BOT_TOKEN        @BotFather token; falls back to /settings UI
-    TELEGRAM_CHAT_ID          one or more chat IDs, comma-separated
-
-Config saved through /api/config persists to fortress_config.json. On
-Render's free tier that file resets on every deploy; env vars are
-durable.
+Config lives at fortress_config.json (ephemeral on Render free tier);
+env vars are consulted at boot as defaults. Saving through /api/config
+mutates os.environ so broker/gemini calls in the same process pick up
+the new values immediately, then writes the JSON file.
 """
 
 from __future__ import annotations
@@ -40,29 +35,31 @@ import os
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
-from typing import Any
+from datetime import date, datetime, time as dtime, timedelta, timezone
+from typing import Any, Optional
 
 import requests
-from flask import Flask, abort, jsonify, request
-from datetime import time as dtime
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, JSONResponse
+
 try:
     from zoneinfo import ZoneInfo
-except ImportError:  # < 3.9 — shouldn't happen on our slim image
+except ImportError:
     ZoneInfo = None
+
+# broker + analysis functions are defined in main.py / alpaca.py; imported
+# lazily inside functions to avoid circular imports at module-load time.
+
+log = logging.getLogger("fortress.ui")
 
 CONFIG_FILE = os.environ.get("FORTRESS_CONFIG_FILE", "fortress_config.json")
 LOG_CAPACITY = 200
-BACKEND_TIMEOUT = 8.0
-CACHE_TTL = 15.0  # seconds — scan/positions are expensive; cache aggressively
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("companion")
 
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
 _config_lock = threading.Lock()
+_env_keys_at_boot: set[str] = set()
 
 
 def _load_config() -> dict:
@@ -70,8 +67,6 @@ def _load_config() -> dict:
         "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_ids": os.environ.get("TELEGRAM_CHAT_ID", ""),
         "telegram_enabled": True,
-        "fortress_api_url": os.environ.get("FORTRESS_API_URL", ""),
-        "fortress_api_token": os.environ.get("FORTRESS_API_TOKEN", ""),
         "scan_capital": 5000,
         "alpaca_api_key": os.environ.get("ALPACA_API_KEY", ""),
         "alpaca_api_secret": os.environ.get("ALPACA_API_SECRET", ""),
@@ -96,19 +91,36 @@ def _save_config(cfg: dict) -> None:
         json.dump(cfg, f, indent=4)
 
 
-# Tracks which keys came from the environment at boot vs. which were saved
-# later via /api/config. The Settings UI uses this so the user can tell at a
-# glance whether a value will survive a container restart (env = durable,
-# disk = ephemeral on Render free tier).
-_env_keys_at_boot: set[str] = set()
+def _apply_config_to_env(cfg: dict) -> None:
+    """Push the current runtime config into os.environ so broker.py + the
+    Gemini analysis code (which read from env) pick up the new values without
+    a restart. Also bust the broker's client cache so subsequent API calls
+    build a new TradingClient against the new creds."""
+    if cfg.get("alpaca_api_key"):
+        os.environ["ALPACA_API_KEY"] = cfg["alpaca_api_key"]
+    if cfg.get("alpaca_api_secret"):
+        os.environ["ALPACA_API_SECRET"] = cfg["alpaca_api_secret"]
+    os.environ["ALPACA_PAPER"] = "true" if cfg.get("alpaca_paper", True) else "false"
+    if cfg.get("gemini_api_key"):
+        os.environ["GEMINI_API_KEY"] = cfg["gemini_api_key"]
+    if cfg.get("telegram_bot_token"):
+        os.environ["TELEGRAM_BOT_TOKEN"] = cfg["telegram_bot_token"]
+    if cfg.get("telegram_chat_ids"):
+        os.environ["TELEGRAM_CHAT_ID"] = cfg["telegram_chat_ids"]
+    # Bust broker cache so next call picks up new creds
+    try:
+        import alpaca as broker  # type: ignore
+        with broker._client_lock:
+            broker._trading_cache.clear()
+            broker._option_cache.clear()
+    except Exception:
+        pass
 
 
 def _record_env_keys() -> None:
     for env, cfg_key in (
         ("TELEGRAM_BOT_TOKEN", "telegram_bot_token"),
         ("TELEGRAM_CHAT_ID", "telegram_chat_ids"),
-        ("FORTRESS_API_URL", "fortress_api_url"),
-        ("FORTRESS_API_TOKEN", "fortress_api_token"),
         ("ALPACA_API_KEY", "alpaca_api_key"),
         ("ALPACA_API_SECRET", "alpaca_api_secret"),
         ("ALPACA_PAPER", "alpaca_paper"),
@@ -119,19 +131,17 @@ def _record_env_keys() -> None:
 
 
 _record_env_keys()
+app_config = _load_config()
 
 
 def _parse_chat_ids(raw: str) -> list[str]:
     return [p.strip() for p in (raw or "").split(",") if p.strip()]
 
 
-app_config = _load_config()
-
-
 # ── Logs (ring buffer, thread-safe) ─────────────────────────────────────────
 
 _logs_lock = threading.Lock()
-logs: deque[dict] = deque(maxlen=LOG_CAPACITY)
+logs_ring: deque[dict] = deque(maxlen=LOG_CAPACITY)
 
 
 def add_log(message: str, level: str = "info") -> None:
@@ -141,11 +151,11 @@ def add_log(message: str, level: str = "info") -> None:
         "message": message,
     }
     with _logs_lock:
-        logs.append(entry)
+        logs_ring.append(entry)
     log.info("[%s] %s", level, message)
 
 
-add_log("System initialized")
+add_log("UI module initialized")
 
 
 # ── Telegram ────────────────────────────────────────────────────────────────
@@ -175,278 +185,126 @@ def send_telegram_alert(message: str) -> None:
             add_log(f"ERR: {chat_id} — {e}", "error")
 
 
-# ── Backend client (fortress-api) ───────────────────────────────────────────
-
-_cache: dict[str, tuple[float, Any]] = {}
-_cache_lock = threading.Lock()
-
-
-def _backend_settings() -> tuple[str, str]:
-    with _config_lock:
-        return (
-            app_config.get("fortress_api_url", "").rstrip("/"),
-            app_config.get("fortress_api_token", ""),
-        )
-
-
-def _backend_headers() -> dict:
-    """Auth + Alpaca + Gemini creds to forward to fortress-api on every /v1/* call."""
-    with _config_lock:
-        token = app_config.get("fortress_api_token", "")
-        ak = app_config.get("alpaca_api_key", "")
-        as_ = app_config.get("alpaca_api_secret", "")
-        paper = bool(app_config.get("alpaca_paper", True))
-        gk = app_config.get("gemini_api_key", "")
-        gemini_on = bool(app_config.get("gemini_enabled", True))
-    headers = {"Authorization": f"Bearer {token}"}
-    if ak:
-        headers["X-Alpaca-Key"] = ak
-    if as_:
-        headers["X-Alpaca-Secret"] = as_
-    # Always pin paper/live explicitly so a typo in env vars can't accidentally
-    # arm a live order. Defaults true → paper.
-    headers["X-Alpaca-Paper"] = "true" if paper else "false"
-    # Only forward Gemini key when analysis is enabled — respects the Settings
-    # toggle without wiping the saved key.
-    if gk and gemini_on:
-        headers["X-Gemini-Key"] = gk
-    return headers
-
-
-def _cached_fetch(key: str, fetcher) -> tuple[Any, bool]:
-    now = time.monotonic()
-    with _cache_lock:
-        cached = _cache.get(key)
-        if cached and now - cached[0] < CACHE_TTL:
-            return cached[1], True
-    try:
-        value = fetcher()
-    except Exception:
-        # On failure, fall back to last-known-good if we have one
-        with _cache_lock:
-            cached = _cache.get(key)
-            if cached:
-                return cached[1], True
-        raise
-    with _cache_lock:
-        _cache[key] = (now, value)
-    return value, False
-
-
-def fetch_scan(capital: int) -> list[dict]:
-    url, token = _backend_settings()
-    if not url or not token:
-        return _demo_scan()
-
-    def _do():
-        resp = requests.get(
-            f"{url}/v1/radar/scan",
-            params={"capital": capital},
-            headers=_backend_headers(),
-            timeout=BACKEND_TIMEOUT,
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    try:
-        data, _ = _cached_fetch(f"scan:{capital}", _do)
-        return data
-    except requests.RequestException as e:
-        add_log(f"ERR: backend scan — {e}", "error")
-        return _demo_scan()
-
-
-def fetch_positions() -> list[dict]:
-    url, token = _backend_settings()
-    if not url or not token:
-        return _demo_positions()
-
-    def _do():
-        resp = requests.get(
-            f"{url}/v1/armory/positions",
-            headers=_backend_headers(),
-            timeout=BACKEND_TIMEOUT,
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    try:
-        data, _ = _cached_fetch("positions", _do)
-        return data
-    except requests.RequestException as e:
-        add_log(f"ERR: backend positions — {e}", "error")
-        return _demo_positions()
-
-
-def fetch_earnings(tickers: list[str]) -> dict:
-    """Earnings-blackout gate snapshot for the given tickers. Demo data when
-    fortress-api isn't wired so the Earnings tab is never blank."""
-    url, token = _backend_settings()
-    cleaned = [t.strip().upper() for t in tickers if t and t.strip()]
-    if not cleaned:
-        return {"items": [], "blackoutDays": 7, "asOf": None, "demo": False}
-    if not url or not token:
-        return _demo_earnings(cleaned)
-
-    def _do():
-        resp = requests.get(
-            f"{url}/v1/earnings",
-            params={"tickers": ",".join(cleaned)},
-            headers=_backend_headers(),
-            timeout=BACKEND_TIMEOUT,
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    try:
-        data, _ = _cached_fetch(f"earnings:{','.join(cleaned)}", _do)
-        data.setdefault("demo", False)
-        return data
-    except requests.RequestException as e:
-        add_log(f"ERR: backend earnings — {e}", "error")
-        return _demo_earnings(cleaned)
-
-
-def _demo_earnings(tickers: list[str]) -> dict:
-    """Pretend-calendar: ETFs are always clear, every other ticker gets a
-    fake next-earnings date 9 days out (puts them inside the 7-day blackout
-    visualization so the gate UI is recognizable in demo mode)."""
-    today = datetime.now(timezone.utc).date()
-    items = []
-    etfs = {"SPY", "QQQ", "IWM"}
-    for t in tickers:
-        is_etf = t in etfs
-        if is_etf:
-            items.append({"ticker": t, "nextEarningsDate": None, "daysUntil": None,
-                          "withinBlackout": False, "isEtf": True})
-        else:
-            d = today.replace(day=1).replace(day=min(28, today.day))  # stable demo date
-            from datetime import timedelta as _td
-            nd = today + _td(days=9)
-            items.append({"ticker": t, "nextEarningsDate": nd.isoformat(),
-                          "daysUntil": 9, "withinBlackout": False, "isEtf": False})
-    return {"items": items, "blackoutDays": 7,
-            "asOf": datetime.now(timezone.utc).isoformat(), "demo": True}
-
+# ── Direct-call broker / analysis / earnings ───────────────────────────────
 
 def _demo_scan() -> list[dict]:
-    """Sample plays so the UI works before fortress-api is wired. Each play is
-    tuned to a different rating tier so the rating system is visible in demo
-    mode without having to wait for live market conditions."""
     return [
-        # 🔥 amazing: high POP, deep buffer, low delta
-        {
-            "id": "SPY-PCS-540",
-            "ticker": "SPY",
-            "strategy": "PUT_CREDIT_SPREAD",
-            "shortStrike": 540.0,
-            "longStrike": 535.0,
-            "expiration": "2026-07-13",
-            "dte": 13,
-            "estimatedCreditPerContract": 0.45,
-            "safetyBufferPct": 0.105,
-            "underlyingPrice": 603.4,
-            "probabilityOfProfit": 0.88,
-            "shortDelta": 0.10,
-            "ivRank": 0.52,
-            "earningsClear": True,
-            "demo": True,
-        },
-        # 👍 ok: solid but not exceptional
-        {
-            "id": "QQQ-PCS-470",
-            "ticker": "QQQ",
-            "strategy": "PUT_CREDIT_SPREAD",
-            "shortStrike": 470.0,
-            "longStrike": 465.0,
-            "expiration": "2026-07-13",
-            "dte": 13,
-            "estimatedCreditPerContract": 0.55,
-            "safetyBufferPct": 0.075,
-            "underlyingPrice": 508.0,
-            "probabilityOfProfit": 0.79,
-            "shortDelta": 0.16,
-            "ivRank": 0.46,
-            "earningsClear": True,
-            "demo": True,
-        },
-        # ⚠ risky: thin buffer, low POP
-        {
-            "id": "IWM-PCS-205",
-            "ticker": "IWM",
-            "strategy": "PUT_CREDIT_SPREAD",
-            "shortStrike": 205.0,
-            "longStrike": 200.0,
-            "expiration": "2026-07-13",
-            "dte": 13,
-            "estimatedCreditPerContract": 0.85,
-            "safetyBufferPct": 0.045,
-            "underlyingPrice": 214.7,
-            "probabilityOfProfit": 0.66,
-            "shortDelta": 0.28,
-            "ivRank": 0.51,
-            "earningsClear": True,
-            "demo": True,
-        },
+        {"id": "SPY-PCS-540", "ticker": "SPY", "strategy": "PUT_CREDIT_SPREAD",
+         "shortStrike": 540.0, "longStrike": 535.0, "expiration": "2026-07-13",
+         "dte": 13, "estimatedCreditPerContract": 0.45, "safetyBufferPct": 0.105,
+         "underlyingPrice": 603.4, "probabilityOfProfit": 0.88, "shortDelta": 0.10,
+         "ivRank": 0.52, "earningsClear": True, "demo": True},
+        {"id": "QQQ-PCS-470", "ticker": "QQQ", "strategy": "PUT_CREDIT_SPREAD",
+         "shortStrike": 470.0, "longStrike": 465.0, "expiration": "2026-07-13",
+         "dte": 13, "estimatedCreditPerContract": 0.55, "safetyBufferPct": 0.075,
+         "underlyingPrice": 508.0, "probabilityOfProfit": 0.79, "shortDelta": 0.16,
+         "ivRank": 0.46, "earningsClear": True, "demo": True},
+        {"id": "IWM-PCS-205", "ticker": "IWM", "strategy": "PUT_CREDIT_SPREAD",
+         "shortStrike": 205.0, "longStrike": 200.0, "expiration": "2026-07-13",
+         "dte": 13, "estimatedCreditPerContract": 0.85, "safetyBufferPct": 0.045,
+         "underlyingPrice": 214.7, "probabilityOfProfit": 0.66, "shortDelta": 0.28,
+         "ivRank": 0.51, "earningsClear": True, "demo": True},
     ]
 
 
 def _demo_positions() -> list[dict]:
     return [
-        {
-            "id": "GOOGL-2026-06-29-265",
-            "ticker": "GOOGL",
-            "strategyLabel": "$265 / $260 Put Spread",
-            "shortStrike": 265.0,
-            "underlyingPrice": 277.4,
-            "entryPremium": 0.55,
-            "currentPremium": 0.21,
-            "expiration": "2026-07-06",
-            "contracts": 1,
-            "demo": True,
-        }
+        {"id": "SPY-2026-07-13-540", "ticker": "SPY",
+         "strategyLabel": "$540 / $535 Put Spread", "shortStrike": 540.0,
+         "underlyingPrice": 603.4, "entryPremium": 0.55, "currentPremium": 0.21,
+         "expiration": "2026-07-13", "contracts": 1, "demo": True},
     ]
 
 
-# ── Scheduled Deck (persistent per-day play list + validity checker) ────────
-#
-# Model: an in-memory dict of currently-monitored plays. A background thread
-# ticks every minute in ET and:
-#   - 09:00 sharp: clears the deck (fresh morning)
-#   - 10:00-16:00 on market days (Mon-Fri, non-NYSE-holiday): refreshes at
-#     :00 / :15 / :30 / :45 — pulls a fresh /v1/radar/scan, adds any new
-#     ids, drops any tracked ids that are no longer present ("no longer
-#     valid"). Also runs an immediate refresh at 10:00.
-#
-# On Render's free tier the container spins down after ~15 min idle. When
-# it wakes we opportunistically refresh if the last scan is stale, so the
-# deck catches up even if the scheduled tick was missed while asleep.
+def get_scan(capital: int) -> list[dict]:
+    """Direct-call the broker scanner. Falls back to demo data when Alpaca
+    isn't configured — no HTTP hop."""
+    try:
+        import alpaca as broker  # type: ignore
+        if broker.is_configured():
+            live = broker.scan_chains(capital)
+            if live:
+                return live
+        return _demo_scan()
+    except Exception as e:
+        log.warning("[scan] direct call failed: %s", e)
+        return _demo_scan()
+
+
+def get_positions() -> list[dict]:
+    try:
+        import alpaca as broker  # type: ignore
+        if broker.is_configured():
+            return broker.list_positions()
+        return _demo_positions()
+    except Exception as e:
+        log.warning("[positions] direct call failed: %s", e)
+        return _demo_positions()
+
+
+def get_earnings(tickers: list[str]) -> dict:
+    try:
+        import alpaca as broker  # type: ignore
+        items = broker.get_earnings_calendar(tickers)
+        return {"items": items, "blackoutDays": broker.EARNINGS_BLACKOUT_DAYS,
+                "asOf": datetime.now(timezone.utc).isoformat(), "demo": False}
+    except Exception as e:
+        log.warning("[earnings] direct call failed: %s", e)
+        today = date.today()
+        items = []
+        etfs = {"SPY", "QQQ", "IWM"}
+        for t in tickers:
+            t = t.strip().upper()
+            if t in etfs:
+                items.append({"ticker": t, "nextEarningsDate": None, "daysUntil": None,
+                              "withinBlackout": False, "isEtf": True})
+            else:
+                nd = today + timedelta(days=9)
+                items.append({"ticker": t, "nextEarningsDate": nd.isoformat(),
+                              "daysUntil": 9, "withinBlackout": False, "isEtf": False})
+        return {"items": items, "blackoutDays": 7,
+                "asOf": datetime.now(timezone.utc).isoformat(), "demo": True}
+
+
+def get_market_summary() -> dict:
+    plays = get_scan(app_config.get("scan_capital", 5000))
+    iv_ranks = [p.get("ivRank") or 0 for p in plays if p.get("ivRank") is not None]
+    avg_iv = sum(iv_ranks) / len(iv_ranks) if iv_ranks else 0.0
+    if avg_iv >= 0.45:
+        rating, sub = "OPTIMAL", "IV elevated"
+    elif avg_iv >= 0.30:
+        rating, sub = "FAIR", "moderate IV"
+    else:
+        rating, sub = "WAIT", "IV compressed"
+    demo = any(p.get("demo") for p in plays)
+    return {
+        "vix": {"value": 14.8, "label": "LOW / CALM"},
+        "spy": {"price": 737.23, "changePct": 0.24},
+        "premiumSell": {"rating": rating, "sub": sub, "avgIvRank": round(avg_iv, 2)},
+        "demo": demo,
+    }
+
+
+# ── Scheduled Deck (persistent per-day play list + validity checker) ───────
 
 MARKET_TZ = ZoneInfo("America/New_York") if ZoneInfo else None
 
-# 2026-2027 NYSE trading holidays. Extend annually.
 US_MARKET_HOLIDAYS: set[str] = {
-    # 2026
     "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
     "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-    # 2027
     "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
     "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
 }
 
-DECK_CLEAR_HOUR = 9      # 09:00 ET daily wipe
-DECK_START_HOUR = 10     # 10:00 ET first scan of the day
-DECK_STOP_HOUR = 16      # 16:00 ET stop scanning (market close)
-DECK_TICK_MINUTES = 15   # every :00 :15 :30 :45 during market hours
+DECK_CLEAR_HOUR = 9
+DECK_START_HOUR = 10
+DECK_STOP_HOUR = 16
+DECK_TICK_MINUTES = 15
 
 _deck_lock = threading.Lock()
 _deck: dict[str, dict] = {}
-_deck_meta = {
-    "lastScanAt": None,   # ISO timestamp of most recent refresh
-    "lastClearAt": None,  # ISO timestamp of most recent clear
-    "lastReason": None,   # why the last clear/refresh happened
-}
-_last_scheduled_action: dict[str, str] = {}  # key: "9AM-2026-07-01" → prevents duplicate fires
+_deck_meta = {"lastScanAt": None, "lastClearAt": None, "lastReason": None}
+_last_scheduled_action: dict[str, str] = {}
 
 
 def _market_now():
@@ -455,26 +313,23 @@ def _market_now():
     return datetime.now(MARKET_TZ)
 
 
-def is_market_day(d: datetime | None = None) -> bool:
+def is_market_day(d=None):
     d = d or _market_now()
     if d.weekday() >= 5:
         return False
     return d.date().isoformat() not in US_MARKET_HOLIDAYS
 
 
-def is_market_hours(d: datetime | None = None) -> bool:
+def is_market_hours(d=None):
     d = d or _market_now()
     if not is_market_day(d):
         return False
-    now_t = d.time()
-    return dtime(DECK_START_HOUR, 0) <= now_t < dtime(DECK_STOP_HOUR, 0)
+    return dtime(DECK_START_HOUR, 0) <= d.time() < dtime(DECK_STOP_HOUR, 0)
 
 
 def refresh_deck(reason: str = "manual") -> dict:
-    """Fetch a fresh scan; merge into the deck. Adds new play ids, drops any
-    tracked ids not present in the fresh scan (validity check)."""
     capital = app_config.get("scan_capital", 5000)
-    fresh = fetch_scan(capital)
+    fresh = get_scan(capital)
     fresh_by_id = {p["id"]: p for p in fresh}
     now = datetime.now(timezone.utc)
     added, removed = 0, 0
@@ -511,20 +366,14 @@ def clear_deck(reason: str = "manual") -> dict:
 
 
 def _scheduler_tick():
-    """Called every minute. Fires 9:00 clear + 10:00-15:45 refresh on market days.
-    Uses `_last_scheduled_action` to prevent duplicate fires within the same minute."""
     now = _market_now()
     today = now.date().isoformat()
     hh, mm = now.hour, now.minute
-
-    # 09:00 daily clear (fires regardless of market day so weekends also see a clean slate)
     if hh == DECK_CLEAR_HOUR and mm == 0:
         key = f"9AM-{today}"
         if _last_scheduled_action.get("clear") != key:
             _last_scheduled_action["clear"] = key
-            clear_deck(f"scheduled 09:00 ET clear")
-
-    # 10:00-15:45 refresh every DECK_TICK_MINUTES on market days
+            clear_deck("scheduled 09:00 ET clear")
     if is_market_hours(now) and mm % DECK_TICK_MINUTES == 0:
         key = f"scan-{today}-{hh:02d}{mm:02d}"
         if _last_scheduled_action.get("scan") != key:
@@ -542,9 +391,6 @@ def _scheduler_loop():
 
 
 def _opportunistic_refresh():
-    """Called at page-load. If last scan is stale (>15 min) AND we're inside
-    market hours, kick off a refresh so the deck catches up after a Render
-    spin-down."""
     last = _deck_meta.get("lastScanAt")
     if not is_market_hours():
         return
@@ -561,112 +407,83 @@ def _opportunistic_refresh():
                      daemon=True).start()
 
 
-def _start_scheduler_once():
-    """Run in a daemon thread so gunicorn workers don't leak on shutdown."""
+def start_scheduler():
     t = threading.Thread(target=_scheduler_loop, daemon=True, name="deck-scheduler")
     t.start()
     add_log(f"Deck scheduler started (clear 09:00, scan 10:00-16:00 ET every {DECK_TICK_MINUTES}m)")
 
 
-_start_scheduler_once()
+# ── FastAPI router ──────────────────────────────────────────────────────────
+
+router = APIRouter(tags=["ui"])
 
 
-def market_summary() -> dict:
-    """VIX/SPY/Premium-Sell header. Backend doesn't expose these yet, so we
-    derive a 'premium sell' rating from the plays we just scanned (avg IV
-    rank) and stub VIX/SPY. When you later add a /v1/market endpoint, swap
-    this for a real fetch."""
-    plays = fetch_scan(app_config.get("scan_capital", 5000))
-    iv_ranks = [p.get("ivRank") or 0 for p in plays if p.get("ivRank") is not None]
-    avg_iv = sum(iv_ranks) / len(iv_ranks) if iv_ranks else 0.0
-    if avg_iv >= 0.45:
-        rating, sub = "OPTIMAL", "IV elevated"
-    elif avg_iv >= 0.30:
-        rating, sub = "FAIR", "moderate IV"
-    else:
-        rating, sub = "WAIT", "IV compressed"
-    return {
-        "vix": {"value": 14.8, "label": "LOW / CALM"},  # TODO: wire real VIX
-        "spy": {"price": 737.23, "changePct": 0.24},      # TODO: wire real SPY
-        "premiumSell": {"rating": rating, "sub": sub, "avgIvRank": round(avg_iv, 2)},
-        "demo": not all(_backend_settings()),
-    }
-
-
-# ── Flask app ───────────────────────────────────────────────────────────────
-
-app = Flask(__name__)
-
-
-@app.route("/healthz")
+@router.get("/healthz")
 def healthz():
-    return jsonify({"ok": True})
+    return {"ok": True}
 
 
-@app.route("/api/config", methods=["GET", "POST"])
-def api_config():
-    if request.method == "POST":
-        payload = request.get_json(silent=True) or {}
-        with _config_lock:
-            for key in (
-                "telegram_bot_token", "telegram_chat_ids",
-                "fortress_api_url", "fortress_api_token",
-                "alpaca_api_key", "alpaca_api_secret",
-                "gemini_api_key",
-            ):
-                if key in payload:
-                    app_config[key] = str(payload[key]).strip()
-            if "telegram_enabled" in payload:
-                app_config["telegram_enabled"] = bool(payload["telegram_enabled"])
-            if "alpaca_paper" in payload:
-                app_config["alpaca_paper"] = bool(payload["alpaca_paper"])
-            if "gemini_enabled" in payload:
-                app_config["gemini_enabled"] = bool(payload["gemini_enabled"])
-            if "scan_capital" in payload:
-                try:
-                    app_config["scan_capital"] = max(100, int(payload["scan_capital"]))
-                except (TypeError, ValueError):
-                    pass
-            app_config.pop("telegram_chat_id", None)
+@router.get("/api/config")
+def api_config_get():
+    return _config_response()
+
+
+@router.post("/api/config")
+async def api_config_post(request: Request):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "expected JSON object")
+    with _config_lock:
+        for key in ("telegram_bot_token", "telegram_chat_ids",
+                    "alpaca_api_key", "alpaca_api_secret", "gemini_api_key"):
+            if key in payload:
+                app_config[key] = str(payload[key]).strip()
+        if "telegram_enabled" in payload:
+            app_config["telegram_enabled"] = bool(payload["telegram_enabled"])
+        if "alpaca_paper" in payload:
+            app_config["alpaca_paper"] = bool(payload["alpaca_paper"])
+        if "gemini_enabled" in payload:
+            app_config["gemini_enabled"] = bool(payload["gemini_enabled"])
+        if "scan_capital" in payload:
             try:
-                _save_config(app_config)
-            except OSError as e:
-                add_log(f"ERR: could not persist config — {e}", "error")
-        add_log("Configuration updated")
-        # bust caches that depend on backend creds
-        with _cache_lock:
-            _cache.clear()
+                app_config["scan_capital"] = max(100, int(payload["scan_capital"]))
+            except (TypeError, ValueError):
+                pass
+        try:
+            _save_config(app_config)
+        except OSError as e:
+            add_log(f"ERR: could not persist config — {e}", "error")
+        _apply_config_to_env(app_config)
+    add_log("Configuration updated")
+    return _config_response()
+
+
+def _config_response() -> dict:
     with _config_lock:
         cfg = dict(app_config)
-    # never echo full secrets back to the browser — mask them
+
     def mask(v: str) -> str:
         return f"{v[:6]}…{v[-4:]}" if v and len(v) > 12 else ("set" if v else "")
 
     def source(key: str) -> str:
-        """Where this value lives — guides the UX about persistence:
-            env  → set as a host env var → durable across container restarts
-            disk → saved through /api/config → lost on Render free spin-down
-            none → not set
-        """
-        present = bool(cfg.get(key))
-        if not present:
+        if not cfg.get(key):
             return "none"
         return "env" if key in _env_keys_at_boot else "disk"
 
-    return jsonify({
+    return {
         "telegram_bot_token_masked": mask(cfg.get("telegram_bot_token", "")),
         "telegram_bot_token_present": bool(cfg.get("telegram_bot_token")),
         "telegram_bot_token_source": source("telegram_bot_token"),
         "telegram_chat_ids": cfg.get("telegram_chat_ids", ""),
         "telegram_chat_ids_source": source("telegram_chat_ids"),
         "telegram_enabled": bool(cfg.get("telegram_enabled", True)),
-        "fortress_api_url": cfg.get("fortress_api_url", ""),
-        "fortress_api_url_source": source("fortress_api_url"),
-        "fortress_api_token_masked": mask(cfg.get("fortress_api_token", "")),
-        "fortress_api_token_present": bool(cfg.get("fortress_api_token")),
-        "fortress_api_token_source": source("fortress_api_token"),
+        "fortress_api_url": "(inline)",  # kept for UI compat
+        "fortress_api_url_source": "env",
+        "fortress_api_token_masked": "",
+        "fortress_api_token_present": True,
+        "fortress_api_token_source": "env",
         "scan_capital": cfg.get("scan_capital", 5000),
-        "backend_connected": bool(cfg.get("fortress_api_url") and cfg.get("fortress_api_token")),
+        "backend_connected": True,  # always true — we ARE the backend
         "alpaca_api_key_masked": mask(cfg.get("alpaca_api_key", "")),
         "alpaca_api_key_present": bool(cfg.get("alpaca_api_key")),
         "alpaca_api_key_source": source("alpaca_api_key"),
@@ -678,26 +495,18 @@ def api_config():
         "gemini_api_key_present": bool(cfg.get("gemini_api_key")),
         "gemini_api_key_source": source("gemini_api_key"),
         "gemini_enabled": bool(cfg.get("gemini_enabled", True)),
-    })
+    }
 
 
-@app.route("/api/scan")
-def api_scan():
-    """Returns the current deck (managed by the scheduler + validity checker),
-    NOT a live scan. If the deck is empty and we're inside market hours, do a
-    single opportunistic refresh so first-visits after container spin-down
-    aren't stale. Manual refresh is via POST /api/deck/refresh."""
-    try:
-        capital = int(request.args.get("capital") or app_config.get("scan_capital", 5000))
-    except ValueError:
-        capital = 5000
+@router.get("/api/scan")
+def api_scan(capital: Optional[int] = None):
     _opportunistic_refresh()
     with _deck_lock:
         plays = list(_deck.values())
         meta = dict(_deck_meta)
-    return jsonify({
+    return {
         "plays": plays,
-        "capital": capital,
+        "capital": capital or app_config.get("scan_capital", 5000),
         "deck": {
             "size": len(plays),
             "lastScanAt": meta.get("lastScanAt"),
@@ -706,125 +515,89 @@ def api_scan():
             "marketHours": is_market_hours(),
             "marketDay": is_market_day(),
         },
-    })
+    }
 
 
-@app.route("/api/deck/refresh", methods=["POST"])
-def api_deck_refresh():
-    result = refresh_deck("manual (Scan Now)")
-    return jsonify({"ok": True, **result})
-
-
-@app.route("/api/deck/clear", methods=["POST"])
-def api_deck_clear():
-    result = clear_deck("manual (Clear Deck)")
-    return jsonify({"ok": True, **result})
-
-
-@app.route("/api/positions")
+@router.get("/api/positions")
 def api_positions():
-    return jsonify({"positions": fetch_positions()})
+    return {"positions": get_positions()}
 
 
-@app.route("/api/market")
-def api_market():
-    return jsonify(market_summary())
+@router.get("/api/earnings")
+def api_earnings(tickers: str = Query("SPY,QQQ,IWM")):
+    parsed = [t for t in tickers.split(",") if t.strip()] or ["SPY", "QQQ", "IWM"]
+    return get_earnings(parsed)
 
 
-@app.route("/api/analyze/play", methods=["POST"])
-def api_analyze_play():
-    """Proxy per-play AI analysis to fortress-api. Body is the play object as
-    the browser already has it (from /api/scan). Falls back to a deterministic
-    tooltip-style analysis when backend or Gemini isn't wired."""
-    payload = request.get_json(silent=True) or {}
-    url, token = _backend_settings()
-    if not url or not token:
-        return jsonify({"analysis": _local_analysis_fallback(payload), "source": "fallback"})
-
+@router.post("/api/analyze/play")
+async def api_analyze_play(request: Request):
+    payload = await request.json() or {}
     try:
-        resp = requests.post(
-            f"{url}/v1/analyze/play",
-            headers=_backend_headers(),
-            json=payload,
-            timeout=BACKEND_TIMEOUT * 2,  # Gemini can be slow — give it room
-        )
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException as e:
-        add_log(f"ERR: analyze/play — {e}", "error")
-        return jsonify({"analysis": _local_analysis_fallback(payload), "source": "fallback"})
+        from main import AnalyzePlayRequest, _analyze_play  # type: ignore
+    except ImportError:
+        return {"analysis": "(analysis unavailable)", "source": "fallback"}
+    with _config_lock:
+        key = app_config.get("gemini_api_key", "") if app_config.get("gemini_enabled", True) else ""
+    try:
+        req = AnalyzePlayRequest(**payload)
+    except Exception:
+        return {"analysis": "(bad payload)", "source": "fallback"}
+    resp = _analyze_play(req, key or None)
+    return {"analysis": resp.analysis, "source": resp.source}
 
 
-def _local_analysis_fallback(p: dict) -> str:
-    buf = (p.get("safetyBufferPct") or 0) * 100
-    pop = (p.get("probabilityOfProfit") or 0) * 100
-    rating = (p.get("rating") or "").upper()
-    ticker = p.get("ticker", "this ticker")
-    short = p.get("shortStrike", 0)
-    if rating == "AMAZING":
-        return (f"{ticker} sits {buf:.1f}% above the ${short:.0f} short strike with "
-                f"{pop:.0f}% POP — premium worth taking. Cut on a close under ${short:.0f}.")
-    if rating == "OK":
-        return (f"Standard setup: {buf:.1f}% cushion, {pop:.0f}% POP. Take if you have book "
-                f"capacity; skip if correlated to existing positions.")
-    return (f"Thin buffer ({buf:.1f}%) or low probability ({pop:.0f}%) — skip unless you "
-            f"have a strong directional view on {ticker}.")
+@router.get("/api/market")
+def api_market():
+    return get_market_summary()
 
 
-@app.route("/api/earnings")
-def api_earnings():
-    """Earnings-blackout gate. Caller hands us the ticker list (universe +
-    held positions); we proxy the calendar lookup to fortress-api. The
-    universe defaults to SPY/QQQ/IWM if no ?tickers= param is given."""
-    raw = request.args.get("tickers", "")
-    tickers = [t for t in raw.split(",") if t.strip()] or ["SPY", "QQQ", "IWM"]
-    return jsonify(fetch_earnings(tickers))
-
-
-@app.route("/api/alert", methods=["POST"])
-def api_alert():
-    payload = request.get_json(silent=True) or {}
+@router.post("/api/alert")
+async def api_alert(request: Request):
+    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     message = (payload.get("message") or "🚨 Fortress Test Action Triggered from Companion GUI").strip()
     add_log(f"🚨 {message}")
-    threading.Thread(
-        target=send_telegram_alert, args=(message,), daemon=True,
-    ).start()
-    return jsonify({"ok": True})
+    threading.Thread(target=send_telegram_alert, args=(message,), daemon=True).start()
+    return {"ok": True}
 
 
-@app.route("/api/logs")
+@router.get("/api/logs")
 def api_logs():
     with _logs_lock:
-        rows = list(logs)
+        rows = list(logs_ring)
     with _config_lock:
         token = app_config.get("telegram_bot_token", "")
         ids = _parse_chat_ids(app_config.get("telegram_chat_ids", ""))
         enabled = bool(app_config.get("telegram_enabled", True))
-    return jsonify({
+    return {
         "logs": rows,
         "telegram": {
             "ready": bool(token and ids and enabled),
             "enabled": enabled,
             "recipientCount": len(ids),
         },
-    })
+    }
 
 
-# Back-compat: the old single-page dashboard linked to /settings. Redirect
-# anything that lands there to the new SPA (it has a Settings tab).
-@app.route("/settings")
-def settings_legacy():
-    return INDEX_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+@router.post("/api/deck/refresh")
+def api_deck_refresh():
+    return {"ok": True, **refresh_deck("manual (Scan Now)")}
 
 
-@app.route("/")
-def index():
-    return INDEX_HTML, 200, {"Content-Type": "text/html; charset=utf-8"}
+@router.post("/api/deck/clear")
+def api_deck_clear():
+    return {"ok": True, **clear_deck("manual (Clear Deck)")}
+
+
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+def ui_root():
+    return HTMLResponse(INDEX_HTML)
+
+
+# Push the loaded config into env so broker/gemini see it immediately.
+_apply_config_to_env(app_config)
 
 
 # ── The single-page app ─────────────────────────────────────────────────────
-# Inline for simplicity (no template dir, no static files). Dark/green
-# aesthetic matching the screenshots; ~one big file is intentional.
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
@@ -1929,10 +1702,5 @@ setInterval(() => { if (currentTab === "alerts") refreshFeed(); }, 4000);
 
 </body>
 </html>
+
 """
-
-
-if __name__ == "__main__":
-    # Local dev only. Production uses gunicorn (see Dockerfile).
-    port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=False)
