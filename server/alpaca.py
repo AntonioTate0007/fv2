@@ -642,12 +642,16 @@ def get_earnings_calendar(tickers: list[str],
 
 # ── Scanner ─────────────────────────────────────────────────────────────────────
 
-def scan_chains(capital: int) -> list[dict]:
+def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
     """
     Pull live options chains for the configured UNDERLYINGS (v1.2: SPY/QQQ/IWM)
     and surface put-credit spread candidates that pass the hardened filter
-    stack: DTE 7-14, ≥10% OTM safety moat, short-leg |delta| in [0.10, 0.15],
+    stack: DTE 14-45, ≥10% OTM safety moat, short-leg |delta| in [0.10, 0.15],
     and no earnings event between today and expiry+7d.
+
+    Pass `tickers=[...]` to override the default UNDERLYINGS list — used by
+    the watchlist "Find Play" endpoint which runs an on-demand scan for a
+    single symbol the operator asked about.
     """
     if not is_configured():
         return []
@@ -660,20 +664,24 @@ def scan_chains(capital: int) -> list[dict]:
     client = _trading_client()
     odc = _option_client()
 
+    universe = [t.strip().upper() for t in (tickers or UNDERLYINGS) if t and t.strip()]
+    if not universe:
+        return []
+
     # Get spot prices in one call.
     try:
         from alpaca.data.historical.stock import StockHistoricalDataClient
         from alpaca.data.requests import StockLatestTradeRequest
         sdc = StockHistoricalDataClient(api_key=_api_key(), secret_key=_api_secret())
         spots_resp = sdc.get_stock_latest_trade(
-            StockLatestTradeRequest(symbol_or_symbols=UNDERLYINGS)
+            StockLatestTradeRequest(symbol_or_symbols=universe)
         )
         spots = {sym: float(trade.price) for sym, trade in spots_resp.items()}
     except Exception as e:
         log.warning("[alpaca] spot fetch failed: %s", e)
         return []
 
-    for ticker in UNDERLYINGS:
+    for ticker in universe:
         spot = spots.get(ticker, 0.0)
         if spot <= 0:
             continue
