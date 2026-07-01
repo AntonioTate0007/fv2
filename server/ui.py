@@ -75,6 +75,8 @@ def _load_config() -> dict:
         "gemini_enabled": True,
         "profit_alert_pct": 50,   # fire Telegram alert when a position hits N% of max profit
         "profit_alerts_enabled": True,
+        "watchlist_tickers": [],  # ordered list of tickers user manually watches
+        "theme": "dark",          # "dark" | "light"
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -534,6 +536,15 @@ async def api_config_post(request: Request):
                 app_config["profit_alert_pct"] = max(1, min(99, int(payload["profit_alert_pct"])))
             except (TypeError, ValueError):
                 pass
+        if "theme" in payload and payload["theme"] in ("dark", "light"):
+            app_config["theme"] = payload["theme"]
+        if "watchlist_tickers" in payload and isinstance(payload["watchlist_tickers"], list):
+            cleaned = []
+            for t in payload["watchlist_tickers"]:
+                s = str(t).strip().upper()
+                if s and s not in cleaned:
+                    cleaned.append(s)
+            app_config["watchlist_tickers"] = cleaned
         if "scan_capital" in payload:
             try:
                 app_config["scan_capital"] = max(100, int(payload["scan_capital"]))
@@ -587,6 +598,8 @@ def _config_response() -> dict:
         "gemini_enabled": bool(cfg.get("gemini_enabled", True)),
         "profit_alert_pct": int(cfg.get("profit_alert_pct", 50) or 50),
         "profit_alerts_enabled": bool(cfg.get("profit_alerts_enabled", True)),
+        "watchlist_tickers": list(cfg.get("watchlist_tickers", [])),
+        "theme": cfg.get("theme", "dark"),
     }
 
 
@@ -665,6 +678,64 @@ def api_market():
     return get_market_summary()
 
 
+@router.get("/api/watchlist")
+def api_watchlist():
+    """Return the current watchlist with a live spot price per ticker.
+    Prices come from broker.get_stock_quotes() when Alpaca is configured;
+    otherwise stubbed so the UI cards still render."""
+    with _config_lock:
+        tickers = list(app_config.get("watchlist_tickers", []))
+    prices: dict[str, float] = {}
+    try:
+        import alpaca as broker  # type: ignore
+        if tickers and broker.is_configured():
+            prices = broker.get_stock_quotes(tickers) or {}
+    except Exception as e:
+        log.warning("[watchlist] quote fetch failed: %s", e)
+    items = [{"ticker": t, "price": prices.get(t)} for t in tickers]
+    return {"items": items}
+
+
+@router.post("/api/watchlist/find_play")
+async def api_watchlist_find_play(request: Request):
+    """On-demand scan for a single ticker the operator asked about. Runs the
+    full v1.2 filter stack (delta, OTM, earnings), just against one symbol.
+    Result is added to the deck like any other scanned play."""
+    payload = await request.json() or {}
+    ticker = str(payload.get("ticker", "")).strip().upper()
+    if not ticker:
+        raise HTTPException(400, "ticker required")
+    capital = app_config.get("scan_capital", 5000)
+    try:
+        import alpaca as broker  # type: ignore
+        if not broker.is_configured():
+            return {"ok": False, "found": 0,
+                    "message": "Alpaca not configured — set keys in Settings first."}
+        found = broker.scan_chains(capital, tickers=[ticker]) or []
+    except Exception as e:
+        log.exception("[find_play] %s failed: %s", ticker, e)
+        return {"ok": False, "found": 0, "message": str(e)}
+    if not found:
+        return {"ok": True, "found": 0,
+                "message": f"{ticker}: no candidate passed the v1.2 filter stack right now."}
+    # Fold into the deck so it appears in Plays on the next refresh.
+    now = datetime.now(timezone.utc)
+    with _deck_lock:
+        for p in found:
+            existing = _deck.get(p["id"])
+            if existing:
+                p["_addedAt"] = existing.get("_addedAt", now.isoformat())
+                p["_scanCount"] = existing.get("_scanCount", 0) + 1
+            else:
+                p["_addedAt"] = now.isoformat()
+                p["_scanCount"] = 1
+            _deck[p["id"]] = p
+        _deck_meta["lastScanAt"] = now.isoformat()
+        _deck_meta["lastReason"] = f"manual find_play ({ticker})"
+    add_log(f"Watchlist: added {len(found)} {ticker} play(s) to deck")
+    return {"ok": True, "found": len(found), "message": f"Added {len(found)} {ticker} play(s) to deck."}
+
+
 @router.post("/api/alert")
 async def api_alert(request: Request):
     payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
@@ -720,7 +791,7 @@ INDEX_HTML = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fortress Companion</title>
 <style>
-  :root {
+  :root, body.theme-dark {
     --bg: #0d1117;
     --panel: #161b22;
     --panel-2: #1c2128;
@@ -732,6 +803,19 @@ INDEX_HTML = r"""<!doctype html>
     --gold: #ffd700;
     --orange: #ff9933;
     --red: #f87171;
+  }
+  body.theme-light {
+    --bg: #f5f7fa;
+    --panel: #ffffff;
+    --panel-2: #f0f2f5;
+    --border: #e1e5eb;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --green: #16a34a;
+    --green-dim: #15803d;
+    --gold: #b45309;
+    --orange: #ea580c;
+    --red: #dc2626;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
@@ -799,9 +883,17 @@ INDEX_HTML = r"""<!doctype html>
   .card-head { display: flex; align-items: flex-start; gap: 12px; }
   .ticker-logo {
     width: 38px; height: 38px; border-radius: 50%;
-    background: #fff; color: #000; display: flex; align-items: center;
-    justify-content: center; font-weight: 800; font-size: 13px; flex-shrink: 0;
+    background: #fff; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 13px; color: #000; flex-shrink: 0;
+    position: relative;
   }
+  .ticker-logo img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .ticker-logo .letter { display: none; }
+  .ticker-logo.no-logo .letter { display: block; }
+  .ticker-logo.no-logo img { display: none; }
   .ticker-info { flex: 1; min-width: 0; }
   .ticker-info .top { display: flex; align-items: baseline; gap: 8px; }
   .ticker-info .top h3 { margin: 0; font-size: 22px; font-weight: 800; }
@@ -879,6 +971,47 @@ INDEX_HTML = r"""<!doctype html>
   .src-disk { background: rgba(255,215,0,0.08);  color: var(--gold);  border:1px solid rgba(255,215,0,0.30); }
   .src-none { background: rgba(139,148,158,0.10); color: var(--muted); border:1px solid var(--border); }
   .src-ok   { background: rgba(74,222,128,0.10); color: var(--green); border:1px solid rgba(74,222,128,0.35); }
+
+  /* Theme toggle */
+  .theme-row { display: flex; gap: 8px; margin-top: 4px; }
+  .theme-btn {
+    flex: 1; padding: 10px 14px; border-radius: 6px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); cursor: pointer; font-size: 14px;
+  }
+  .theme-btn.active {
+    background: var(--green); color: #052e1f; border-color: var(--green);
+    font-weight: 700;
+  }
+
+  /* Watchlist */
+  .wl-add-row { display: flex; gap: 8px; margin-top: 12px; margin-bottom: 12px; }
+  .wl-add-row input {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 10px 12px; font-size: 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .wl-add-row button { padding: 10px 18px; }
+  .wl-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  .wl-card {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 10px 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    position: relative;
+  }
+  .wl-card .ticker-logo { width: 32px; height: 32px; margin-bottom: 4px; }
+  .wl-ticker { font-weight: 700; font-size: 15px; }
+  .wl-price { font-weight: 600; font-size: 14px; }
+  .wl-find { padding: 6px 12px; font-size: 12.5px; margin-top: 4px; }
+  .wl-remove {
+    position: absolute; top: 4px; right: 6px;
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 18px; line-height: 1; padding: 2px 6px;
+  }
+  .wl-remove:hover { color: var(--red); }
 
   /* Play rating badges */
   .rate-badge {
@@ -1056,6 +1189,18 @@ function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({
     "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
   }[c]));
+}
+
+// Stock logo with graceful fallback to a colored letter circle. Uses FMP's
+// free image endpoint (no auth) and toggles a .no-logo class on img error so
+// the letter shows through when the ticker isn't in their catalog.
+function tickerLogo(ticker, extra = "") {
+  const t = escapeHtml((ticker || "?").toUpperCase());
+  return `<div class="ticker-logo ${extra}">
+    <img src="https://financialmodelingprep.com/image-stock/${t}.png"
+         alt="${t}" onerror="this.parentElement.classList.add('no-logo')">
+    <span class="letter">${t.slice(0,1)}</span>
+  </div>`;
 }
 
 function strategyLabel(s) {
@@ -1249,7 +1394,7 @@ function playCard(p) {
   return `
     <div class="card" data-play-id="${escapeHtml(p.id)}">
       <div class="card-head">
-        <div class="ticker-logo">${escapeHtml(p.ticker.slice(0,1))}</div>
+        ${tickerLogo(p.ticker)}
         <div class="ticker-info">
           <div class="top">
             <h3>${escapeHtml(p.ticker)}</h3>
@@ -1515,7 +1660,7 @@ function positionCard(p, ern) {
     ${targetBadge}
     ${ernBadge}
     <div class="card-head">
-      <div class="ticker-logo">${escapeHtml(p.ticker.slice(0,1))}</div>
+      ${tickerLogo(p.ticker)}
       <div class="ticker-info">
         <div class="top"><h3>${escapeHtml(p.ticker)}</h3></div>
         <div class="meta">${escapeHtml(p.strategyLabel)} • Exp: ${escapeHtml(p.expiration)}</div>
@@ -1605,7 +1750,7 @@ function earningsRow(item) {
     : "—";
   return `<div class="card" style="padding:14px;">
     <div style="display:flex; align-items:center; gap:14px;">
-      <div class="ticker-logo">${escapeHtml(item.ticker.slice(0,1))}</div>
+      ${tickerLogo(item.ticker)}
       <div style="flex:1;">
         <div style="font-size:17px; font-weight:700;">${escapeHtml(item.ticker)}</div>
         <div class="muted" style="font-size:12px; margin-top:2px;">
@@ -1672,6 +1817,25 @@ async function renderSettings() {
   $("#tab-content").innerHTML = `
     <div class="settings">
       ${onDisk ? `<div class="demo-banner" style="margin-bottom:16px;">⚠ One or more secrets are saved on disk only. On Render's free tier the container's filesystem resets on cold start (~15 min of inactivity). For durability, paste the same values into the service's <strong>Environment</strong> tab on Render.</div>` : ""}
+
+      <div class="section">
+        <h3>Appearance</h3>
+        <p class="desc">Switch between dark and light modes. Persists across sessions.</p>
+        <div class="theme-row">
+          <button class="theme-btn ${cfg.theme === 'dark' ? 'active' : ''}" data-theme="dark">🌙 Dark</button>
+          <button class="theme-btn ${cfg.theme === 'light' ? 'active' : ''}" data-theme="light">☀ Light</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Watchlist Tickers & Scanner</h3>
+        <p class="desc">Symbols you want to hunt for plays on demand. "Find Play" runs the full v1.2 filter stack against just that ticker and drops any survivors into the deck. Single stocks reintroduce earnings/gap risk that the ETF-only scanner avoids — the earnings gate still applies.</p>
+        <div class="wl-add-row">
+          <input type="text" id="wl-input" placeholder="Add Ticker (e.g. MSFT)" style="text-transform:uppercase;">
+          <button class="btn btn-primary" id="wl-add">Add</button>
+        </div>
+        <div id="wl-grid" class="wl-grid"></div>
+      </div>
 
       <div class="section">
         <h3>Scanner</h3>
@@ -1760,6 +1924,89 @@ async function renderSettings() {
   $$(".save-row .btn-primary").forEach(btn => {
     btn.addEventListener("click", () => saveSettings(btn.dataset.section, btn));
   });
+
+  // Theme toggle — apply instantly + persist to config
+  $$(".theme-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const t = btn.dataset.theme;
+      applyTheme(t);
+      $$(".theme-btn").forEach(b => b.classList.toggle("active", b.dataset.theme === t));
+      await fetch("/api/config", { method:"POST",
+        headers:{"Content-Type":"application/json"}, body:JSON.stringify({theme: t}) });
+    });
+  });
+
+  // Watchlist add + card grid
+  await renderWatchlist(cfg.watchlist_tickers);
+  $("#wl-add").addEventListener("click", () => addWatchlistTicker());
+  $("#wl-input").addEventListener("keydown", e => { if (e.key === "Enter") addWatchlistTicker(); });
+}
+
+async function renderWatchlist(tickers) {
+  const grid = $("#wl-grid");
+  if (!grid) return;
+  grid.innerHTML = tickers.length
+    ? tickers.map(t => watchlistCard(t, null)).join("")
+    : `<div class="empty" style="padding:16px 0;">No tickers yet — add one above.</div>`;
+  // fetch live prices in one call and patch cards
+  try {
+    const data = await fetch("/api/watchlist").then(r => r.json());
+    grid.innerHTML = (data.items || []).map(i => watchlistCard(i.ticker, i.price)).join("")
+                     || `<div class="empty" style="padding:16px 0;">No tickers yet — add one above.</div>`;
+    // wire find-play + remove buttons
+    grid.querySelectorAll('[data-wl-find]').forEach(b => b.addEventListener("click",
+      () => findPlayFor(b.dataset.wlFind)));
+    grid.querySelectorAll('[data-wl-remove]').forEach(b => b.addEventListener("click",
+      () => removeWatchlistTicker(b.dataset.wlRemove)));
+  } catch (e) { /* fall back to cards without prices */ }
+}
+
+function watchlistCard(ticker, price) {
+  const priceText = price != null ? `$${price.toFixed(2)}` : "—";
+  return `<div class="wl-card">
+    <button class="wl-remove" data-wl-remove="${escapeHtml(ticker)}" title="Remove">×</button>
+    ${tickerLogo(ticker)}
+    <div class="wl-ticker">${escapeHtml(ticker)}</div>
+    <div class="wl-price green">${priceText}</div>
+    <button class="btn btn-primary wl-find" data-wl-find="${escapeHtml(ticker)}">Find Play</button>
+  </div>`;
+}
+
+async function addWatchlistTicker() {
+  const inp = $("#wl-input");
+  const t = (inp.value || "").trim().toUpperCase();
+  if (!t) return;
+  inp.value = "";
+  const cfg = await fetch("/api/config").then(r => r.json());
+  const list = cfg.watchlist_tickers || [];
+  if (list.includes(t)) return;
+  list.push(t);
+  await fetch("/api/config", { method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({watchlist_tickers: list}) });
+  await renderWatchlist(list);
+}
+
+async function removeWatchlistTicker(ticker) {
+  const cfg = await fetch("/api/config").then(r => r.json());
+  const list = (cfg.watchlist_tickers || []).filter(x => x !== ticker);
+  await fetch("/api/config", { method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({watchlist_tickers: list}) });
+  await renderWatchlist(list);
+}
+
+async function findPlayFor(ticker) {
+  const r = await fetch("/api/watchlist/find_play", { method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ticker}) });
+  const data = await r.json();
+  alert(data.message || (data.ok ? `Added ${data.found} plays.` : "Find failed."));
+}
+
+function applyTheme(t) {
+  document.body.className = "theme-" + t;
+  try { localStorage.setItem("fortress-theme", t); } catch (e) {}
 }
 
 async function saveSettings(section, btn) {
@@ -1828,6 +2075,16 @@ function render() {
   else if (currentTab === "alerts") renderAlerts();
   else if (currentTab === "settings") renderSettings();
 }
+
+// Apply saved theme immediately on load (avoid flash), then load config
+try {
+  const t = localStorage.getItem("fortress-theme") || "dark";
+  document.body.className = "theme-" + t;
+} catch (e) { document.body.className = "theme-dark"; }
+// Sync from server config (may override localStorage if server has a saved value)
+fetch("/api/config").then(r => r.json()).then(cfg => {
+  if (cfg.theme) applyTheme(cfg.theme);
+});
 
 loadMarket();
 render();
