@@ -73,6 +73,8 @@ def _load_config() -> dict:
         "alpaca_paper": (os.environ.get("ALPACA_PAPER", "true").lower() != "false"),
         "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
         "gemini_enabled": True,
+        "profit_alert_pct": 50,   # fire Telegram alert when a position hits N% of max profit
+        "profit_alerts_enabled": True,
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -355,6 +357,75 @@ def refresh_deck(reason: str = "manual") -> dict:
     return {"added": added, "removed": removed, "size": len(_deck)}
 
 
+# ── Position tracker — fires Telegram alert when profit target is hit ──────
+#
+# Model: every tick during market hours (see _scheduler_tick), pull positions,
+# compute profit% per position, and fire a Telegram alert the first time each
+# position crosses the configured threshold. Fired thresholds are tracked per
+# position so we don't spam (until container restart, then a duplicate is
+# possible — accepted trade-off for MVP simplicity).
+
+_alert_lock = threading.Lock()
+_fired_targets: dict[str, set[int]] = {}   # position_id → {50, 100, ...} thresholds already alerted
+_last_seen_status: dict[str, dict] = {}    # position_id → latest snapshot for the UI
+
+
+def _position_profit_pct(p: dict) -> float:
+    """Percent of max profit collected, based on Alpaca's ActivePosition shape.
+    entryPremium = credit collected at open; currentPremium = cost to close now.
+    Positive when we're winning."""
+    entry = p.get("entryPremium") or 0.0
+    current = p.get("currentPremium") or 0.0
+    if entry <= 0:
+        return 0.0
+    return max(-999.0, min(999.0, (entry - current) / entry * 100.0))
+
+
+def check_position_alerts() -> None:
+    """Poll positions, compute profit %, fire alerts on threshold crossings."""
+    if not app_config.get("profit_alerts_enabled", True):
+        return
+    threshold = int(app_config.get("profit_alert_pct", 50) or 50)
+    positions = get_positions()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for p in positions:
+        pid = p.get("id")
+        if not pid:
+            continue
+        profit_pct = _position_profit_pct(p)
+        with _alert_lock:
+            _last_seen_status[pid] = {
+                "ticker": p.get("ticker"),
+                "profitPct": round(profit_pct, 1),
+                "targetPct": threshold,
+                "targetHit": profit_pct >= threshold,
+                "checkedAt": now_iso,
+            }
+            fired = _fired_targets.setdefault(pid, set())
+            # Consider standard tiers so a big jump doesn't skip an alert.
+            for tier in (threshold, 75, 100):
+                if profit_pct >= tier and tier not in fired:
+                    fired.add(tier)
+                    ticker = p.get("ticker", pid)
+                    strat = p.get("strategyLabel", "position")
+                    contracts = p.get("contracts", 1)
+                    profit_dollars = (p.get("entryPremium", 0) - p.get("currentPremium", 0)) * 100 * contracts
+                    label = "MAX PROFIT" if tier == 100 else f"{tier}% target"
+                    msg = (f"🎯 {ticker} {label} hit — {profit_pct:.0f}% of credit "
+                           f"(≈ ${profit_dollars:.0f} on {contracts}x {strat}). "
+                           f"Consider closing.")
+                    add_log(f"Position tracker: {msg}", "success")
+                    # Fire Telegram in a background thread so it doesn't block the tick
+                    threading.Thread(target=send_telegram_alert, args=(msg,), daemon=True).start()
+
+
+def position_status_map() -> dict:
+    """UI helper — returns a shallow copy of _last_seen_status."""
+    with _alert_lock:
+        return {k: dict(v) for k, v in _last_seen_status.items()}
+
+
 def clear_deck(reason: str = "manual") -> dict:
     with _deck_lock:
         size = len(_deck)
@@ -379,6 +450,18 @@ def _scheduler_tick():
         if _last_scheduled_action.get("scan") != key:
             _last_scheduled_action["scan"] = key
             refresh_deck(f"scheduled {hh:02d}:{mm:02d} ET scan")
+
+    # Position tracker fires every 5 minutes during market hours (independent
+    # of the deck refresh cadence — position P&L moves faster than the
+    # scanner's need to run).
+    if is_market_hours(now) and mm % 5 == 0:
+        key = f"positions-{today}-{hh:02d}{mm:02d}"
+        if _last_scheduled_action.get("positions") != key:
+            _last_scheduled_action["positions"] = key
+            try:
+                check_position_alerts()
+            except Exception:
+                log.exception("[position-tracker] tick failed")
 
 
 def _scheduler_loop():
@@ -444,6 +527,13 @@ async def api_config_post(request: Request):
             app_config["alpaca_paper"] = bool(payload["alpaca_paper"])
         if "gemini_enabled" in payload:
             app_config["gemini_enabled"] = bool(payload["gemini_enabled"])
+        if "profit_alerts_enabled" in payload:
+            app_config["profit_alerts_enabled"] = bool(payload["profit_alerts_enabled"])
+        if "profit_alert_pct" in payload:
+            try:
+                app_config["profit_alert_pct"] = max(1, min(99, int(payload["profit_alert_pct"])))
+            except (TypeError, ValueError):
+                pass
         if "scan_capital" in payload:
             try:
                 app_config["scan_capital"] = max(100, int(payload["scan_capital"]))
@@ -495,6 +585,8 @@ def _config_response() -> dict:
         "gemini_api_key_present": bool(cfg.get("gemini_api_key")),
         "gemini_api_key_source": source("gemini_api_key"),
         "gemini_enabled": bool(cfg.get("gemini_enabled", True)),
+        "profit_alert_pct": int(cfg.get("profit_alert_pct", 50) or 50),
+        "profit_alerts_enabled": bool(cfg.get("profit_alerts_enabled", True)),
     }
 
 
@@ -520,7 +612,29 @@ def api_scan(capital: Optional[int] = None):
 
 @router.get("/api/positions")
 def api_positions():
-    return {"positions": get_positions()}
+    positions = get_positions()
+    # Compute the CURRENT profit% snapshot inline (independent of scheduler
+    # ticks) so the UI always shows the freshest number, then overlay the
+    # tracker's fired-alert status.
+    fired_map = position_status_map()
+    with _alert_lock:
+        fired_thresholds = {pid: sorted(list(t)) for pid, t in _fired_targets.items()}
+    for p in positions:
+        pid = p.get("id")
+        p["profitPct"] = round(_position_profit_pct(p), 1)
+        p["profitDollars"] = round((p.get("entryPremium", 0) - p.get("currentPremium", 0))
+                                   * 100 * (p.get("contracts", 1)), 2)
+        p["firedTargets"] = fired_thresholds.get(pid, [])
+        seen = fired_map.get(pid)
+        if seen:
+            p["targetHit"] = seen.get("targetHit", False)
+            p["targetPct"] = seen.get("targetPct")
+    threshold = int(app_config.get("profit_alert_pct", 50) or 50)
+    return {
+        "positions": positions,
+        "profitAlertPct": threshold,
+        "profitAlertsEnabled": bool(app_config.get("profit_alerts_enabled", True)),
+    }
 
 
 @router.get("/api/earnings")
@@ -743,6 +857,14 @@ INDEX_HTML = r"""<!doctype html>
     background: rgba(248,113,113,0.10);
     border: 1px solid rgba(248,113,113,0.45);
     color: var(--red);
+    font-size: 12.5px; font-weight: 700;
+    padding: 6px 10px; border-radius: 6px;
+    margin-bottom: 12px; letter-spacing: 0.2px;
+  }
+  .target-badge {
+    background: rgba(74,222,128,0.12);
+    border: 1px solid rgba(74,222,128,0.45);
+    color: var(--green);
     font-size: 12.5px; font-weight: 700;
     padding: 6px 10px; border-radius: 6px;
     margin-bottom: 12px; letter-spacing: 0.2px;
@@ -1386,7 +1508,11 @@ function positionCard(p, ern) {
   const ernBadge = (ern && ern.withinBlackout)
     ? `<div class="ern-badge">⚠ Earnings in ${ern.daysUntil}d — gate flagged</div>`
     : "";
+  const targetBadge = p.targetHit
+    ? `<div class="target-badge">🎯 ${p.profitPct}% profit — GTC exit ready (target: ${p.targetPct}%)</div>`
+    : "";
   return `<div class="card">
+    ${targetBadge}
     ${ernBadge}
     <div class="card-head">
       <div class="ticker-logo">${escapeHtml(p.ticker.slice(0,1))}</div>
@@ -1559,6 +1685,21 @@ async function renderSettings() {
       </div>
 
       <div class="section">
+        <h3>Profit-Target Alerts ${cfg.profit_alerts_enabled ? '<span class="src-pill src-ok">✓ armed</span>' : '<span class="src-pill src-none">off</span>'}</h3>
+        <p class="desc">The tracker polls your positions every 5 minutes during market hours. When any position crosses this profit threshold, a Telegram alert fires so you can set the GTC exit. Standard tiers (target/75%/100%) each fire once per position per container lifetime.</p>
+        <label>Alert threshold (% of max profit)</label>
+        <input type="number" id="profit-pct" value="${cfg.profit_alert_pct}" min="1" max="99" step="5">
+        <div class="row">
+          <input type="checkbox" id="profit-enabled" ${cfg.profit_alerts_enabled ? 'checked' : ''}>
+          <label for="profit-enabled">Send Telegram when a position hits the target</label>
+        </div>
+        <div class="save-row">
+          <button class="btn btn-primary" data-section="profit">Save Alerts</button>
+          <span class="status"></span>
+        </div>
+      </div>
+
+      <div class="section">
         <h3>Alpaca Broker ${cfg.alpaca_api_key_present && cfg.alpaca_api_secret_present ? `<span class="src-pill src-ok">✓ ${cfg.alpaca_paper ? 'paper' : '<strong style="color:#ff5c5c">LIVE</strong>'}</span>` : '<span class="src-pill src-none">not configured</span>'}</h3>
         <p class="desc">Your Alpaca trading credentials. The companion forwards these to fortress-api on every request so the same scanner uses your account.</p>
 
@@ -1640,6 +1781,9 @@ async function saveSettings(section, btn) {
     const g = $("#gemini-key").value.trim();
     if (g) payload.gemini_api_key = g;
     payload.gemini_enabled = $("#gemini-enabled").checked;
+  } else if (section === "profit") {
+    payload.profit_alert_pct = parseInt($("#profit-pct").value) || 50;
+    payload.profit_alerts_enabled = $("#profit-enabled").checked;
   }
   btn.disabled = true;
   try {
@@ -1658,6 +1802,9 @@ async function saveSettings(section, btn) {
     } else if (section === "gemini") {
       parts.push(`Key: ${data.gemini_api_key_present ? data.gemini_api_key_masked : '(blank)'}`);
       parts.push(`Enabled: ${data.gemini_enabled}`);
+    } else if (section === "profit") {
+      parts.push(`Threshold: ${data.profit_alert_pct}%`);
+      parts.push(`Enabled: ${data.profit_alerts_enabled}`);
     } else {
       parts.push(`Token: ${data.telegram_bot_token_present ? data.telegram_bot_token_masked : '(blank)'}`);
       parts.push(`Chats: ${data.telegram_chat_ids || '(none)'}`);
