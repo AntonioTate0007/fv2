@@ -45,6 +45,11 @@ from typing import Any
 
 import requests
 from flask import Flask, abort, jsonify, request
+from datetime import time as dtime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # < 3.9 — shouldn't happen on our slim image
+    ZoneInfo = None
 
 CONFIG_FILE = os.environ.get("FORTRESS_CONFIG_FILE", "fortress_config.json")
 LOG_CAPACITY = 200
@@ -403,6 +408,169 @@ def _demo_positions() -> list[dict]:
     ]
 
 
+# ── Scheduled Deck (persistent per-day play list + validity checker) ────────
+#
+# Model: an in-memory dict of currently-monitored plays. A background thread
+# ticks every minute in ET and:
+#   - 09:00 sharp: clears the deck (fresh morning)
+#   - 10:00-16:00 on market days (Mon-Fri, non-NYSE-holiday): refreshes at
+#     :00 / :15 / :30 / :45 — pulls a fresh /v1/radar/scan, adds any new
+#     ids, drops any tracked ids that are no longer present ("no longer
+#     valid"). Also runs an immediate refresh at 10:00.
+#
+# On Render's free tier the container spins down after ~15 min idle. When
+# it wakes we opportunistically refresh if the last scan is stale, so the
+# deck catches up even if the scheduled tick was missed while asleep.
+
+MARKET_TZ = ZoneInfo("America/New_York") if ZoneInfo else None
+
+# 2026-2027 NYSE trading holidays. Extend annually.
+US_MARKET_HOLIDAYS: set[str] = {
+    # 2026
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+    "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+    # 2027
+    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+    "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+}
+
+DECK_CLEAR_HOUR = 9      # 09:00 ET daily wipe
+DECK_START_HOUR = 10     # 10:00 ET first scan of the day
+DECK_STOP_HOUR = 16      # 16:00 ET stop scanning (market close)
+DECK_TICK_MINUTES = 15   # every :00 :15 :30 :45 during market hours
+
+_deck_lock = threading.Lock()
+_deck: dict[str, dict] = {}
+_deck_meta = {
+    "lastScanAt": None,   # ISO timestamp of most recent refresh
+    "lastClearAt": None,  # ISO timestamp of most recent clear
+    "lastReason": None,   # why the last clear/refresh happened
+}
+_last_scheduled_action: dict[str, str] = {}  # key: "9AM-2026-07-01" → prevents duplicate fires
+
+
+def _market_now():
+    if MARKET_TZ is None:
+        return datetime.now(timezone.utc)
+    return datetime.now(MARKET_TZ)
+
+
+def is_market_day(d: datetime | None = None) -> bool:
+    d = d or _market_now()
+    if d.weekday() >= 5:
+        return False
+    return d.date().isoformat() not in US_MARKET_HOLIDAYS
+
+
+def is_market_hours(d: datetime | None = None) -> bool:
+    d = d or _market_now()
+    if not is_market_day(d):
+        return False
+    now_t = d.time()
+    return dtime(DECK_START_HOUR, 0) <= now_t < dtime(DECK_STOP_HOUR, 0)
+
+
+def refresh_deck(reason: str = "manual") -> dict:
+    """Fetch a fresh scan; merge into the deck. Adds new play ids, drops any
+    tracked ids not present in the fresh scan (validity check)."""
+    capital = app_config.get("scan_capital", 5000)
+    fresh = fetch_scan(capital)
+    fresh_by_id = {p["id"]: p for p in fresh}
+    now = datetime.now(timezone.utc)
+    added, removed = 0, 0
+    with _deck_lock:
+        for pid in list(_deck.keys()):
+            if pid not in fresh_by_id:
+                del _deck[pid]
+                removed += 1
+                add_log(f"Deck: dropped {pid} (no longer valid)")
+        for pid, p in fresh_by_id.items():
+            existing = _deck.get(pid)
+            if existing:
+                p["_addedAt"] = existing.get("_addedAt", now.isoformat())
+                p["_scanCount"] = existing.get("_scanCount", 0) + 1
+            else:
+                p["_addedAt"] = now.isoformat()
+                p["_scanCount"] = 1
+                added += 1
+                add_log(f"Deck: added {pid}")
+            _deck[pid] = p
+        _deck_meta["lastScanAt"] = now.isoformat()
+        _deck_meta["lastReason"] = reason
+    return {"added": added, "removed": removed, "size": len(_deck)}
+
+
+def clear_deck(reason: str = "manual") -> dict:
+    with _deck_lock:
+        size = len(_deck)
+        _deck.clear()
+        _deck_meta["lastClearAt"] = datetime.now(timezone.utc).isoformat()
+        _deck_meta["lastReason"] = reason
+    add_log(f"Deck cleared ({reason}) — {size} plays removed")
+    return {"cleared": size}
+
+
+def _scheduler_tick():
+    """Called every minute. Fires 9:00 clear + 10:00-15:45 refresh on market days.
+    Uses `_last_scheduled_action` to prevent duplicate fires within the same minute."""
+    now = _market_now()
+    today = now.date().isoformat()
+    hh, mm = now.hour, now.minute
+
+    # 09:00 daily clear (fires regardless of market day so weekends also see a clean slate)
+    if hh == DECK_CLEAR_HOUR and mm == 0:
+        key = f"9AM-{today}"
+        if _last_scheduled_action.get("clear") != key:
+            _last_scheduled_action["clear"] = key
+            clear_deck(f"scheduled 09:00 ET clear")
+
+    # 10:00-15:45 refresh every DECK_TICK_MINUTES on market days
+    if is_market_hours(now) and mm % DECK_TICK_MINUTES == 0:
+        key = f"scan-{today}-{hh:02d}{mm:02d}"
+        if _last_scheduled_action.get("scan") != key:
+            _last_scheduled_action["scan"] = key
+            refresh_deck(f"scheduled {hh:02d}:{mm:02d} ET scan")
+
+
+def _scheduler_loop():
+    while True:
+        try:
+            _scheduler_tick()
+        except Exception:
+            log.exception("[deck-scheduler] tick failed")
+        time.sleep(60)
+
+
+def _opportunistic_refresh():
+    """Called at page-load. If last scan is stale (>15 min) AND we're inside
+    market hours, kick off a refresh so the deck catches up after a Render
+    spin-down."""
+    last = _deck_meta.get("lastScanAt")
+    if not is_market_hours():
+        return
+    now = datetime.now(timezone.utc)
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last)
+            if (now - last_dt).total_seconds() < DECK_TICK_MINUTES * 60:
+                return
+        except ValueError:
+            pass
+    threading.Thread(target=refresh_deck,
+                     args=("opportunistic post-idle refresh",),
+                     daemon=True).start()
+
+
+def _start_scheduler_once():
+    """Run in a daemon thread so gunicorn workers don't leak on shutdown."""
+    t = threading.Thread(target=_scheduler_loop, daemon=True, name="deck-scheduler")
+    t.start()
+    add_log(f"Deck scheduler started (clear 09:00, scan 10:00-16:00 ET every {DECK_TICK_MINUTES}m)")
+
+
+_start_scheduler_once()
+
+
 def market_summary() -> dict:
     """VIX/SPY/Premium-Sell header. Backend doesn't expose these yet, so we
     derive a 'premium sell' rating from the plays we just scanned (avg IV
@@ -515,12 +683,42 @@ def api_config():
 
 @app.route("/api/scan")
 def api_scan():
+    """Returns the current deck (managed by the scheduler + validity checker),
+    NOT a live scan. If the deck is empty and we're inside market hours, do a
+    single opportunistic refresh so first-visits after container spin-down
+    aren't stale. Manual refresh is via POST /api/deck/refresh."""
     try:
         capital = int(request.args.get("capital") or app_config.get("scan_capital", 5000))
     except ValueError:
         capital = 5000
-    plays = fetch_scan(capital)
-    return jsonify({"plays": plays, "capital": capital})
+    _opportunistic_refresh()
+    with _deck_lock:
+        plays = list(_deck.values())
+        meta = dict(_deck_meta)
+    return jsonify({
+        "plays": plays,
+        "capital": capital,
+        "deck": {
+            "size": len(plays),
+            "lastScanAt": meta.get("lastScanAt"),
+            "lastClearAt": meta.get("lastClearAt"),
+            "lastReason": meta.get("lastReason"),
+            "marketHours": is_market_hours(),
+            "marketDay": is_market_day(),
+        },
+    })
+
+
+@app.route("/api/deck/refresh", methods=["POST"])
+def api_deck_refresh():
+    result = refresh_deck("manual (Scan Now)")
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/api/deck/clear", methods=["POST"])
+def api_deck_clear():
+    result = clear_deck("manual (Clear Deck)")
+    return jsonify({"ok": True, **result})
 
 
 @app.route("/api/positions")
@@ -1027,23 +1225,60 @@ async function renderPlays() {
         <button class="clear" id="btn-clear">Clear Deck</button>
       </div>
     </div>
+    <div id="deck-status" class="deck-status muted" style="padding: 0 16px 8px;"></div>
     <div id="plays-list" class="empty">Loading…</div>`;
-  $("#btn-scan").addEventListener("click", loadPlays);
-  $("#btn-clear").addEventListener("click", () => { cachedPlays = []; renderPlayList([], false); });
+  $("#btn-scan").addEventListener("click", async () => {
+    await fetch("/api/deck/refresh", {method:"POST"});
+    await loadPlays();
+  });
+  $("#btn-clear").addEventListener("click", async () => {
+    if (!confirm("Clear all plays from the deck?")) return;
+    await fetch("/api/deck/clear", {method:"POST"});
+    await loadPlays();
+  });
   await loadPlays();
 }
 
 async function loadPlays() {
   const list = $("#plays-list");
-  if (list) list.innerHTML = `<div class="empty">Scanning…</div>`;
+  if (list) list.innerHTML = `<div class="empty">Loading…</div>`;
   try {
     const r = await fetch("/api/scan");
     const data = await r.json();
     cachedPlays = data.plays || [];
+    renderDeckStatus(data.deck || {});
     renderPlayList(cachedPlays, cachedPlays.some(p => p.demo));
   } catch (e) {
     list.innerHTML = `<div class="empty">Could not load plays.</div>`;
   }
+}
+
+function renderDeckStatus(d) {
+  const el = $("#deck-status");
+  if (!el) return;
+  const now = new Date();
+  const rel = (iso) => {
+    if (!iso) return "never";
+    const then = new Date(iso);
+    const s = Math.floor((now - then) / 1000);
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s/60)}m ago`;
+    if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+    return then.toLocaleString();
+  };
+  const marketTag = d.marketHours
+    ? `<span class="green">● market open</span>`
+    : (d.marketDay ? `<span class="gold">market day, off-hours (scans 10:00–16:00 ET)</span>`
+                   : `<span class="muted">closed today</span>`);
+  el.innerHTML = `
+    <span>${d.size || 0} plays in deck</span>
+    &nbsp;·&nbsp;
+    <span>last scan: ${rel(d.lastScanAt)}</span>
+    &nbsp;·&nbsp;
+    <span>last clear: ${rel(d.lastClearAt)}</span>
+    &nbsp;·&nbsp;
+    ${marketTag}
+  `;
 }
 
 function renderPlayList(plays, isDemo) {
@@ -1125,7 +1360,7 @@ function playCard(p) {
             <h3>${escapeHtml(p.ticker)}</h3>
             <span class="rate-badge ${rating.cls}" title="${escapeHtml(rating.tip)}">${rating.emoji} ${rating.tag}</span>
           </div>
-          <div class="meta">${ucase(strategyLabel(p.strategy))} • Exp: ${escapeHtml(p.expiration)} (${p.dte} DTE)</div>
+          <div class="meta">${ucase(strategyLabel(p.strategy))} • Exp: ${escapeHtml(p.expiration)} (${p.dte} DTE)${p._scanCount ? ` • seen ${p._scanCount}× in deck` : ''}</div>
         </div>
         <button class="gtc-btn" onclick="event.stopPropagation()">GTC close</button>
       </div>
