@@ -176,6 +176,33 @@ class JarvisBriefRequest(BaseModel):
     chatId: Optional[str] = None   # defaults to TELEGRAM_CHAT_ID
 
 
+class AnalyzePlayRequest(BaseModel):
+    """Structured play payload for /v1/analyze/play — mirrors ScannedTrade
+    fields the companion has to hand. The rating string is the companion's
+    UI classification (AMAZING / OK / RISKY) which we pass into the prompt
+    so the officer can reason about why the play is (or isn't) worth it."""
+    id: str
+    ticker: str
+    strategy: str
+    shortStrike: float
+    longStrike: float = 0.0
+    expiration: str
+    dte: int
+    estimatedCreditPerContract: float
+    safetyBufferPct: float
+    underlyingPrice: float
+    probabilityOfProfit: float = 0.0
+    shortDelta: Optional[float] = None
+    ivRank: Optional[float] = None
+    earningsClear: bool = True
+    rating: Optional[str] = None
+
+
+class AnalyzePlayResponse(BaseModel):
+    analysis: str
+    source: str  # "gemini" | "cache" | "fallback"
+
+
 # ── Auth ────────────────────────────────────────────────────────────────────────
 
 def _bearer_from_header(authorization: Optional[str]) -> Optional[str]:
@@ -199,6 +226,14 @@ def require_app_auth(authorization: Optional[str] = Header(default=None)) -> Non
     given = _bearer_from_header(authorization)
     if not given or not secrets.compare_digest(given, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad bearer token")
+
+
+def read_gemini_header(
+    x_gemini_key: Optional[str] = Header(default=None, alias="X-Gemini-Key"),
+) -> Optional[str]:
+    """Return the per-request Gemini API key from the header if present,
+    otherwise None (caller falls back to GEMINI_API_KEY env var)."""
+    return (x_gemini_key or "").strip() or None
 
 
 def read_alpaca_headers(
@@ -399,6 +434,101 @@ def gemini_officer_reply(req: RiskOfficerRequest) -> str:
     return resp.text or "I couldn't generate a reply."
 
 
+# ── Per-play analysis (Gemini, header-key aware, small cache) ──────────────────
+
+_ANALYSIS_SYSTEM = """You are Fortress Risk Officer analyzing a specific
+options-selling play. Reply with 2-3 short sentences (max 60 words) that give
+the operator:
+  1. Why this setup is (or isn't) worth taking
+  2. The single biggest risk to watch
+  3. One specific alert level (e.g. "cut if SPY closes below $X")
+
+Be direct. No hedging language. No preamble like "This play..." — dive right
+in. Speak in dollar/percentage terms. Do not repeat the numbers you were
+given; interpret them."""
+
+
+_analysis_cache: dict[str, tuple[float, str]] = {}
+_analysis_lock = __import__("threading").Lock()
+_gemini_config_lock = __import__("threading").Lock()
+_ANALYSIS_TTL = 3600.0  # 1h — a play's characteristics don't change fast
+
+
+def _analyze_play(payload: AnalyzePlayRequest, key_override: Optional[str]) -> AnalyzePlayResponse:
+    import time as _t
+    now = _t.monotonic()
+    cache_key = f"{payload.id}|{payload.rating or ''}|{key_override or 'env'}"
+    with _analysis_lock:
+        cached = _analysis_cache.get(cache_key)
+        if cached and now - cached[0] < _ANALYSIS_TTL:
+            return AnalyzePlayResponse(analysis=cached[1], source="cache")
+
+    key = key_override or os.getenv("GEMINI_API_KEY")
+    if not HAS_GEMINI or not key:
+        return AnalyzePlayResponse(
+            analysis=_analysis_fallback(payload),
+            source="fallback",
+        )
+
+    width = abs(payload.shortStrike - payload.longStrike) if payload.longStrike else 0
+    max_profit = payload.estimatedCreditPerContract * 100
+    max_loss = max(0.0, (width - payload.estimatedCreditPerContract) * 100) if width else payload.shortStrike * 100
+    prompt = f"""Play:
+- Ticker: {payload.ticker}
+- Strategy: {payload.strategy}
+- Short strike: ${payload.shortStrike:.2f}  ({payload.safetyBufferPct*100:.1f}% OTM)
+- Long strike: ${payload.longStrike:.2f}
+- Underlying: ${payload.underlyingPrice:.2f}
+- Premium collected: ${payload.estimatedCreditPerContract:.2f}
+- Max profit/contract: ${max_profit:.0f}
+- Max loss/contract: ${max_loss:.0f}
+- Probability of profit: {payload.probabilityOfProfit*100:.0f}%
+- Short delta: {abs(payload.shortDelta or 0):.2f}
+- IV rank: {(payload.ivRank or 0)*100:.0f}%
+- DTE: {payload.dte}
+- Earnings clear: {payload.earningsClear}
+- Rating: {payload.rating or 'unrated'}
+
+Analysis (2-3 sentences):"""
+
+    try:
+        with _gemini_config_lock:
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel("gemini-1.5-flash",  # cheap + fast for short analysis
+                                          system_instruction=_ANALYSIS_SYSTEM)
+            resp = model.generate_content(prompt)
+        text = (resp.text or "").strip() or _analysis_fallback(payload)
+    except Exception as e:
+        log.warning("[analyze] gemini call failed for %s: %s", payload.id, e)
+        return AnalyzePlayResponse(
+            analysis=_analysis_fallback(payload),
+            source="fallback",
+        )
+
+    with _analysis_lock:
+        _analysis_cache[cache_key] = (now, text)
+        # keep bounded
+        if len(_analysis_cache) > 200:
+            _analysis_cache.pop(next(iter(_analysis_cache)))
+    return AnalyzePlayResponse(analysis=text, source="gemini")
+
+
+def _analysis_fallback(p: AnalyzePlayRequest) -> str:
+    """Deterministic fallback so the UI always has something useful to
+    render — mirrors the rating-tier tooltip logic the companion uses."""
+    buf = p.safetyBufferPct * 100
+    pop = p.probabilityOfProfit * 100
+    if (p.rating or "").upper() == "AMAZING":
+        return (f"{p.ticker} sits {buf:.1f}% above the ${p.shortStrike:.0f} short strike with "
+                f"{pop:.0f}% probability of profit — premium looks worth the delta risk. "
+                f"Watch a close below ${p.shortStrike:.0f} for early exit.")
+    if (p.rating or "").upper() == "OK":
+        return (f"Standard setup: {buf:.1f}% cushion, {pop:.0f}% POP. Take it if you have room in the book; "
+                f"skip if you already hold correlated exposure.")
+    return (f"Thin buffer ({buf:.1f}%) or low probability ({pop:.0f}%) — "
+            f"skip unless you have a strong directional view on {p.ticker}.")
+
+
 # ── Routes ──────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -489,6 +619,18 @@ def earnings_calendar(tickers: str = Query(..., description="Comma-separated tic
           dependencies=[Depends(require_app_auth), Depends(read_alpaca_headers)])
 def officer_ask(req: RiskOfficerRequest):
     return RiskOfficerResponse(reply=gemini_officer_reply(req))
+
+
+@app.post("/v1/analyze/play",
+          response_model=AnalyzePlayResponse,
+          dependencies=[Depends(require_app_auth)])
+def analyze_play(req: AnalyzePlayRequest,
+                 gemini_key: Optional[str] = Depends(read_gemini_header)):
+    """Per-play AI analysis. 2-3 sentence Gemini reply keyed by the play id
+    (1h cache). Accepts X-Gemini-Key header override — falls back to
+    GEMINI_API_KEY env, and to a deterministic tooltip-style fallback when
+    neither is set. Never raises — always returns text."""
+    return _analyze_play(req, gemini_key)
 
 
 @app.post("/v1/notifications/register",
