@@ -1328,7 +1328,7 @@ function renderPlayList(plays, isDemo) {
     return;
   }
   const banner = isDemo
-    ? `<div class="demo-banner">⚠ Showing demo data — wire FORTRESS_API_URL + FORTRESS_API_TOKEN in Settings for live scans.</div>`
+    ? `<div class="demo-banner">⚠ Showing demo data — set your Alpaca keys in Settings (or ALPACA_API_KEY / ALPACA_API_SECRET in ~/fortress/server/.env) for live scans.</div>`
     : "";
   list.innerHTML = banner + plays.map(playCard).join("");
   attachLongPress();
@@ -1639,7 +1639,7 @@ async function renderPositions() {
     const ernByTicker = Object.fromEntries((ern.items || []).map(i => [i.ticker, i]));
 
     list.innerHTML = (data.positions[0]?.demo
-      ? `<div class="demo-banner">⚠ Demo data — wire backend in Settings for live positions.</div>`
+      ? `<div class="demo-banner">⚠ Demo data — set Alpaca keys in Settings for live positions.</div>`
       : "")
       + data.positions.map(p => positionCard(p, ernByTicker[p.ticker])).join("");
   } catch (e) {
@@ -1713,7 +1713,7 @@ async function loadEarnings() {
     const clear = items.filter(i => !i.withinBlackout).length;
 
     const banner = data.demo
-      ? `<div class="demo-banner">⚠ Demo data — wire backend in Settings to pull real earnings dates.</div>`
+      ? `<div class="demo-banner">⚠ Demo data — set Alpaca keys in Settings to pull real earnings dates.</div>`
       : "";
 
     list.innerHTML = banner + `
@@ -1816,7 +1816,7 @@ async function renderSettings() {
 
   $("#tab-content").innerHTML = `
     <div class="settings">
-      ${onDisk ? `<div class="demo-banner" style="margin-bottom:16px;">⚠ One or more secrets are saved on disk only. On Render's free tier the container's filesystem resets on cold start (~15 min of inactivity). For durability, paste the same values into the service's <strong>Environment</strong> tab on Render.</div>` : ""}
+      ${onDisk ? `<div class="demo-banner" style="margin-bottom:16px;">⚠ One or more secrets are saved on disk only (in <code>fortress_config.json</code>). For durability across restarts, put them in <code>~/fortress/server/.env</code> instead: <code>nano ~/fortress/server/.env</code> then <code>sudo systemctl restart fortress</code>.</div>` : ""}
 
       <div class="section">
         <h3>Appearance</h3>
