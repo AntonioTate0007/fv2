@@ -56,10 +56,13 @@ echo.
 pause
 
 REM ---- 3. Run the installer over SSH -----------------------------------
+REM   -tt   force a pseudo-terminal so `sudo` can prompt for the Pi
+REM         password mid-install (without this you get
+REM         "sudo: a terminal is required to read the password")
 REM   -o StrictHostKeyChecking=accept-new    saves the Pi's host key on
 REM                                          first connect without an
 REM                                          interactive prompt
-ssh -o StrictHostKeyChecking=accept-new %PI_USER%@%PI_IP% "curl -sSL https://raw.githubusercontent.com/AntonioTate0007/fv2/main/server/setup-pi.sh | bash"
+ssh -tt -o StrictHostKeyChecking=accept-new %PI_USER%@%PI_IP% "curl -sSL https://raw.githubusercontent.com/AntonioTate0007/fv2/main/server/setup-pi.sh | bash"
 
 set "SSH_EXIT=%errorlevel%"
 echo.
