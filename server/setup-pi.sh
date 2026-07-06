@@ -36,8 +36,22 @@ PORT="${PORT:-8000}"
 log() { printf '\n\033[1;32m▸ %s\033[0m\n' "$*"; }
 err() { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; }
 
+# ── 0. Prime sudo up front ─────────────────────────────────────────────────
+#
+# We use sudo in three places later (apt, systemctl, dpkg). Prompt for the
+# password once now so the operator isn't answering the same question three
+# times, and so the rest of the script runs cleanly under `ssh -tt`.
+log "Priming sudo — enter the Pi's password once (rest of the run is hands-off)"
+sudo -v
+
+# Keep sudo alive in the background so long-running steps (yfinance install
+# on a Pi 3B takes ~10 min) don't need a second password.
+( while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done ) 2>/dev/null &
+SUDO_KEEPALIVE_PID=$!
+trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
+
 # ── 1. System deps ─────────────────────────────────────────────────────────
-log "Installing system packages (may prompt for sudo)…"
+log "Installing system packages…"
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip git curl ca-certificates >/dev/null
