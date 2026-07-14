@@ -334,6 +334,26 @@ def is_market_hours(d=None):
 def refresh_deck(reason: str = "manual") -> dict:
     capital = app_config.get("scan_capital", 5000)
     fresh = get_scan(capital)
+
+    # Belt-and-suspenders: hard-drop any play with a thin OTM moat before it
+    # can reach the deck / UI / Telegram. Matches MIN_OTM_BUFFER=0.10 in the
+    # scanner but is enforced here too so a bug anywhere upstream can't leak
+    # an unsafe setup into the operator's phone.
+    _MIN_MOAT = 0.10
+    safe = []
+    for p in fresh:
+        buf = p.get("safetyBufferPct") or 0
+        if buf < _MIN_MOAT:
+            add_log(
+                f"Moat gate: dropped {p.get('id','?')} "
+                f"({p.get('ticker','?')} short ${p.get('shortStrike','?')} "
+                f"buf={buf*100:.1f}% < 10.0% floor)",
+                "error",
+            )
+            continue
+        safe.append(p)
+    fresh = safe
+
     fresh_by_id = {p["id"]: p for p in fresh}
     now = datetime.now(timezone.utc)
     added, removed = 0, 0
@@ -1365,21 +1385,35 @@ function cssEscape(s) {
 // Play rating: three explicit tiers based on probability-of-profit, safety
 // buffer, and short-leg delta. Pure UI judgment — the scanner already
 // dropped anything genuinely unsafe before it reached this code.
+//
+// HARD RULE (Fortress spec): any setup with < 10% OTM moat is RISKY,
+// period. No POP or delta value can rescue a thin-buffer play into OK or
+// AMAZING. This mirrors MIN_OTM_BUFFER = 0.10 in server/alpaca.py and is
+// a defensive backstop in case anything ever bypasses the server-side
+// scanner filter.
+const MIN_MOAT_FOR_TIER = 0.10;
+
 function ratePlay(p) {
   const pop = p.probabilityOfProfit || 0;
   const buf = p.safetyBufferPct || 0;
   const delta = (p.shortDelta != null) ? Math.abs(p.shortDelta) : (1 - pop);
 
+  // Hard veto: thin moat always demotes to RISKY regardless of POP / delta.
+  if (buf < MIN_MOAT_FOR_TIER) {
+    return {emoji: '⚠', tag: 'RISKY', cls: 'rate-risk',
+            tip: `Moat ${(buf*100).toFixed(1)}% is below the 10% Fortress floor — skip.`};
+  }
+
   // 🔥 amazing: deep buffer, high POP, low delta — premium worth taking.
   if (pop >= 0.85 && buf >= 0.10 && delta <= 0.12) {
     return {emoji: '🔥', tag: 'AMAZING', cls: 'rate-fire', tip: 'Deep buffer, high probability of profit, low delta — premium worth taking.'};
   }
-  // 👍 ok: solid but not exceptional.
-  if (pop >= 0.75 && buf >= 0.07 && delta <= 0.18) {
+  // 👍 ok: solid but not exceptional. Buffer floor still 10% (not 7%).
+  if (pop >= 0.75 && buf >= 0.10 && delta <= 0.18) {
     return {emoji: '👍', tag: 'OK', cls: 'rate-ok', tip: 'Probability and buffer are reasonable. Standard play.'};
   }
   // ⚠ risky: anything weaker — caller should think twice.
-  return {emoji: '⚠', tag: 'RISKY', cls: 'rate-risk', tip: 'Thin buffer or low probability — proceed with caution.'};
+  return {emoji: '⚠', tag: 'RISKY', cls: 'rate-risk', tip: 'Thin buffer, low probability, or delta out of band — proceed with caution.'};
 }
 
 function playCard(p) {
