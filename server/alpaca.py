@@ -79,6 +79,13 @@ RISK_FREE_RATE = 0.045
 # How far past expiry an earnings event must clear before we'll trade a ticker.
 EARNINGS_BLACKOUT_DAYS = 7
 
+# Liquidity gate — mid-price math is only useful if the contract actually
+# trades. Both open interest and bid-ask spread are checked before a play
+# can pass; illiquid contracts get dropped even when delta / moat / earnings
+# all look good. Numbers per the Fortress "production-ready" spec.
+MIN_OPEN_INTEREST = 100
+MAX_BID_ASK_SPREAD_PCT = 0.25  # (ask - bid) / mid must be ≤ 25%
+
 
 # ── Request-scoped overrides ────────────────────────────────────────────────────
 #
@@ -738,6 +745,15 @@ def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
                 if safety_buffer < MIN_OTM_BUFFER:
                     continue  # too close to spot
 
+                # ── Filter 1.5: liquidity gate on the short leg.
+                # OI is the pre-quote gate — no point paying for a quote on a
+                # contract that isn't trading.
+                short_oi = int(getattr(short_c, "open_interest", 0) or 0)
+                if short_oi < MIN_OPEN_INTEREST:
+                    log.debug("[scan] %s short %.2f: OI=%d < %d — dropped",
+                              ticker, short_strike, short_oi, MIN_OPEN_INTEREST)
+                    continue
+
                 # ── Quote the short leg before computing delta (need a mid).
                 try:
                     sq = odc.get_option_latest_quote(
@@ -752,6 +768,15 @@ def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
                 if sb <= 0 or sa <= 0 or sb > sa:
                     continue
                 short_mid = (sb + sa) / 2.0
+
+                # Bid-ask spread gate — reject anything wider than the cap.
+                # Even with OI ≥ 100, a wide spread eats slippage on entry.
+                spread_pct = (sa - sb) / short_mid if short_mid > 0 else 1.0
+                if spread_pct > MAX_BID_ASK_SPREAD_PCT:
+                    log.debug("[scan] %s short %.2f: bid-ask spread %.1f%% > %.1f%% — dropped",
+                              ticker, short_strike, spread_pct * 100,
+                              MAX_BID_ASK_SPREAD_PCT * 100)
+                    continue
 
                 # ── Filter 2: Black-Scholes |delta| in [0.10, 0.15].
                 sigma = implied_vol_put(spot, short_strike, T, RISK_FREE_RATE, short_mid)
@@ -774,6 +799,13 @@ def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
                     continue
                 long_strike, long_c = long_pair
                 if short_strike - long_strike <= 0:
+                    continue
+
+                # ── Long-leg liquidity gate — same OI threshold as the short.
+                long_oi = int(getattr(long_c, "open_interest", 0) or 0)
+                if long_oi < MIN_OPEN_INTEREST:
+                    log.debug("[scan] %s long %.2f: OI=%d < %d — dropped",
+                              ticker, long_strike, long_oi, MIN_OPEN_INTEREST)
                     continue
 
                 # ── Quote the long leg and compute net credit.
@@ -808,6 +840,9 @@ def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
                     "impliedVol": round(sigma, 3),
                     "ivRank": 0.50,  # TODO: wire historical IV pipeline
                     "earningsClear": True,
+                    "shortOpenInterest": short_oi,
+                    "longOpenInterest": long_oi,
+                    "shortBidAskSpreadPct": round(spread_pct, 4),
                 })
 
         # Pick the best survivor per ticker — highest credit wins, ties broken

@@ -197,17 +197,17 @@ def _demo_scan() -> list[dict]:
          "shortStrike": 540.0, "longStrike": 535.0, "expiration": "2026-07-13",
          "dte": 13, "estimatedCreditPerContract": 0.45, "safetyBufferPct": 0.105,
          "underlyingPrice": 603.4, "probabilityOfProfit": 0.88, "shortDelta": 0.10,
-         "ivRank": 0.52, "earningsClear": True, "demo": True},
+         "ivRank": 0.52, "earningsClear": True, "shortOpenInterest": 5400, "longOpenInterest": 3100, "shortBidAskSpreadPct": 0.04, "demo": True},
         {"id": "QQQ-PCS-470", "ticker": "QQQ", "strategy": "PUT_CREDIT_SPREAD",
          "shortStrike": 470.0, "longStrike": 465.0, "expiration": "2026-07-13",
          "dte": 13, "estimatedCreditPerContract": 0.55, "safetyBufferPct": 0.075,
          "underlyingPrice": 508.0, "probabilityOfProfit": 0.79, "shortDelta": 0.16,
-         "ivRank": 0.46, "earningsClear": True, "demo": True},
+         "ivRank": 0.46, "earningsClear": True, "shortOpenInterest": 5400, "longOpenInterest": 3100, "shortBidAskSpreadPct": 0.04, "demo": True},
         {"id": "IWM-PCS-205", "ticker": "IWM", "strategy": "PUT_CREDIT_SPREAD",
          "shortStrike": 205.0, "longStrike": 200.0, "expiration": "2026-07-13",
          "dte": 13, "estimatedCreditPerContract": 0.85, "safetyBufferPct": 0.045,
          "underlyingPrice": 214.7, "probabilityOfProfit": 0.66, "shortDelta": 0.28,
-         "ivRank": 0.51, "earningsClear": True, "demo": True},
+         "ivRank": 0.51, "earningsClear": True, "shortOpenInterest": 5400, "longOpenInterest": 3100, "shortBidAskSpreadPct": 0.04, "demo": True},
     ]
 
 
@@ -1447,7 +1447,10 @@ function playCard(p) {
         <div class="field"><div class="k">Implied Volatility (IV)</div>
           <div class="v">IV Rank: ${ivPct}% &nbsp;|&nbsp; Cushion: ${cushion}%</div></div>
         <div class="field right"><div class="k">Asset Liquidity</div>
-          <div class="v green">HIGH (Bid-Ask Spread &lt; $0.05)</div></div>
+          <div class="v ${p.shortOpenInterest && p.shortOpenInterest >= 100 ? 'green' : 'red'}">
+            OI ${p.shortOpenInterest != null ? p.shortOpenInterest.toLocaleString() : '?'}
+            &nbsp;·&nbsp; Spread ${p.shortBidAskSpreadPct != null ? (p.shortBidAskSpreadPct*100).toFixed(1)+'%' : '?'}
+          </div></div>
         <div class="field"><div class="k">Initial Credit / Potential profit per contract</div>
           <div class="v">${money(credit)} &nbsp;→&nbsp; <span class="green">${money(profitDollars)}</span></div></div>
         <div class="field right"><div class="k">Margin Collateral</div>
