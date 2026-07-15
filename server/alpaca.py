@@ -739,6 +739,7 @@ def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
                 continue
 
             leg_list.sort(key=lambda x: x[0])  # ascending by strike
+            _iv_rank = iv_rank_proxy(ticker)   # cached; compute once per ticker cycle
             for short_strike, short_c in leg_list:
                 # ── Filter 1: 10% OTM safety moat.
                 safety_buffer = (spot - short_strike) / spot
@@ -838,7 +839,7 @@ def scan_chains(capital: int, tickers: list[str] | None = None) -> list[dict]:
                     "probabilityOfProfit": round(1.0 - delta_abs, 3),
                     "shortDelta": round(delta_abs, 3),
                     "impliedVol": round(sigma, 3),
-                    "ivRank": 0.50,  # TODO: wire historical IV pipeline
+                    "ivRank": _iv_rank if _iv_rank is not None else 0.50,
                     "earningsClear": True,
                     "shortOpenInterest": short_oi,
                     "longOpenInterest": long_oi,
@@ -937,3 +938,94 @@ def get_stock_bars(symbol: str, days: int = 30) -> list[float]:
     except Exception as e:
         log.warning("[alpaca] bars fetch %s failed: %s", symbol, e)
         return []
+
+
+# ── Market data helpers (VIX, IV-rank proxy) ────────────────────────────────
+
+_market_cache: dict[str, tuple[float, object]] = {}
+_market_lock = threading.Lock()
+_MARKET_TTL = 60.0  # quotes are fine 1 min stale for a header
+
+
+def _market_cached(key: str, ttl: float, fn):
+    now = time.monotonic()
+    with _market_lock:
+        hit = _market_cache.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    val = fn()
+    with _market_lock:
+        _market_cache[key] = (now, val)
+    return val
+
+
+def get_vix() -> float | None:
+    """Current VIX level via yfinance (^VIX). Cached 60s. None on failure —
+    Alpaca's retail feed doesn't expose VIX so we lean on yfinance here."""
+    def _fetch():
+        try:
+            import yfinance as yf  # type: ignore
+            hist = yf.Ticker("^VIX").history(period="5d", interval="1d")
+            if hist is not None and not hist.empty:
+                return round(float(hist["Close"].iloc[-1]), 2)
+        except Exception as e:
+            log.warning("[market] VIX fetch failed: %s", e)
+        return None
+    return _market_cached("vix", _MARKET_TTL, _fetch)
+
+
+def get_spy_snapshot() -> dict | None:
+    """SPY price + day change %. Prefers Alpaca (already authed); the change
+    is computed against the prior daily close. Cached 60s."""
+    def _fetch():
+        try:
+            price = get_stock_quotes(["SPY"]).get("SPY")
+            closes = get_stock_bars("SPY", 3)
+            if price and len(closes) >= 2:
+                prev = closes[-2]
+                change_pct = (price - prev) / prev * 100 if prev else 0.0
+                return {"price": round(price, 2), "changePct": round(change_pct, 2)}
+            if price:
+                return {"price": round(price, 2), "changePct": 0.0}
+        except Exception as e:
+            log.warning("[market] SPY snapshot failed: %s", e)
+        return None
+    return _market_cached("spy", _MARKET_TTL, _fetch)
+
+
+def iv_rank_proxy(ticker: str) -> float | None:
+    """Percentile rank of the underlying's *realized* volatility over the last
+    ~1y, used as a stand-in for a true IV rank (which needs a year of stored
+    implied-vol history we don't keep). Rolling 20-session annualized vol,
+    ranked against the trailing year. Returns 0..1 or None if data is thin.
+
+    This is a proxy — it tracks the market's actual turbulence, which is what
+    the Fortress 'sell when IV is elevated' rule is really after — but it is
+    HV-based, not IV-based. Cached 1h since it moves slowly."""
+    def _fetch():
+        closes = get_stock_bars(ticker, 300)
+        if len(closes) < 60:
+            return None
+        # daily log returns
+        rets = []
+        for i in range(1, len(closes)):
+            if closes[i - 1] > 0:
+                rets.append(math.log(closes[i] / closes[i - 1]))
+        if len(rets) < 40:
+            return None
+        # rolling 20d annualized vol series
+        window = 20
+        vols = []
+        for i in range(window, len(rets) + 1):
+            chunk = rets[i - window:i]
+            mean = sum(chunk) / window
+            var = sum((r - mean) ** 2 for r in chunk) / (window - 1)
+            vols.append((var ** 0.5) * (252 ** 0.5))
+        if len(vols) < 20:
+            return None
+        current = vols[-1]
+        lo, hi = min(vols), max(vols)
+        if hi <= lo:
+            return 0.5
+        return round(max(0.0, min(1.0, (current - lo) / (hi - lo))), 3)
+    return _market_cached(f"ivrank:{ticker}", 3600.0, _fetch)

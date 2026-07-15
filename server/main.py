@@ -552,6 +552,7 @@ def status_json():
 # import back from main (AnalyzePlayRequest, _analyze_play) without a cycle
 # at module-load time.
 import ui as _ui  # noqa: E402
+app.middleware("http")(_ui.ui_auth_middleware)  # optional Basic Auth for the browser UI
 app.include_router(_ui.router)
 _ui.start_scheduler()
 
