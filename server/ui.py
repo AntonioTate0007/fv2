@@ -280,10 +280,38 @@ def get_market_summary() -> dict:
         rating, sub = "FAIR", "moderate IV"
     else:
         rating, sub = "WAIT", "IV compressed"
-    demo = any(p.get("demo") for p in plays)
+
+    # Real market data via alpaca helpers (falls back to a labeled stub when
+    # the broker isn't configured yet so the header still renders).
+    vix_val, spy_snap = None, None
+    try:
+        import alpaca as broker  # type: ignore
+        if broker.is_configured():
+            vix_val = broker.get_vix()
+            spy_snap = broker.get_spy_snapshot()
+    except Exception as e:
+        log.warning("[market] live fetch failed: %s", e)
+
+    if vix_val is not None:
+        if vix_val < 15:
+            vlabel = "LOW / CALM"
+        elif vix_val < 20:
+            vlabel = "NORMAL"
+        elif vix_val < 30:
+            vlabel = "ELEVATED"
+        else:
+            vlabel = "HIGH / FEAR"
+        vix = {"value": vix_val, "label": vlabel}
+    else:
+        vix = {"value": None, "label": "—"}
+
+    spy = spy_snap or {"price": None, "changePct": None}
+    live = vix_val is not None or spy_snap is not None
+    demo = any(p.get("demo") for p in plays) and not live
+
     return {
-        "vix": {"value": 14.8, "label": "LOW / CALM"},
-        "spy": {"price": 737.23, "changePct": 0.24},
+        "vix": vix,
+        "spy": spy,
         "premiumSell": {"rating": rating, "sub": sub, "avgIvRank": round(avg_iv, 2)},
         "demo": demo,
     }
@@ -521,6 +549,51 @@ def start_scheduler():
 # ── FastAPI router ──────────────────────────────────────────────────────────
 
 router = APIRouter(tags=["ui"])
+
+
+# ── Optional password gate for the browser UI ───────────────────────────────
+#
+# When FORTRESS_UI_PASSWORD is set, the SPA (/) and its /api/* routes require
+# HTTP Basic Auth. The Android API (/v1/*, bearer-authed) and health probes
+# are never gated. When the env var is unset, everything stays open — same
+# behaviour as before, so nothing breaks for existing installs.
+
+import base64 as _b64
+import secrets as _secrets
+
+# Paths that must stay open regardless of the UI password.
+_UI_AUTH_EXEMPT_PREFIXES = ("/v1/", "/telegram/", "/admin/", "/status",
+                            "/healthz", "/docs", "/redoc", "/openapi.json")
+
+
+async def ui_auth_middleware(request, call_next):
+    """HTTP Basic Auth for browser routes. No-op when FORTRESS_UI_PASSWORD
+    is blank. Username is 'admin' (or FORTRESS_UI_USER)."""
+    from starlette.responses import Response
+
+    password = os.environ.get("FORTRESS_UI_PASSWORD", "").strip()
+    path = request.url.path
+    if not password or any(path.startswith(p) for p in _UI_AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+
+    user = os.environ.get("FORTRESS_UI_USER", "admin").strip() or "admin"
+    header = request.headers.get("authorization", "")
+    ok = False
+    if header.lower().startswith("basic "):
+        try:
+            decoded = _b64.b64decode(header[6:]).decode("utf-8", "replace")
+            got_user, _, got_pass = decoded.partition(":")
+            ok = (_secrets.compare_digest(got_user, user)
+                  and _secrets.compare_digest(got_pass, password))
+        except Exception:
+            ok = False
+    if not ok:
+        return Response(
+            "Authentication required.",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="Fortress"'},
+        )
+    return await call_next(request)
 
 
 @router.get("/healthz")
@@ -1257,13 +1330,13 @@ async function loadMarket() {
       <div class="market">
         <div class="cell">
           <div class="label">VIX</div>
-          <div class="value green">${fmt(m.vix.value, 1)}</div>
+          <div class="value ${(m.vix.value != null && m.vix.value >= 20) ? 'orange' : 'green'}">${m.vix.value != null ? fmt(m.vix.value, 1) : '—'}</div>
           <div class="sub">${escapeHtml(m.vix.label)}</div>
         </div>
         <div class="cell">
           <div class="label">SPY</div>
-          <div class="value">${money(m.spy.price)}</div>
-          <div class="sub green">▲ ${fmt(m.spy.changePct, 2)}%</div>
+          <div class="value">${m.spy.price != null ? money(m.spy.price) : '—'}</div>
+          <div class="sub ${(m.spy.changePct != null && m.spy.changePct < 0) ? 'red' : 'green'}">${m.spy.changePct != null ? ((m.spy.changePct < 0 ? '▼ ' : '▲ ') + fmt(Math.abs(m.spy.changePct), 2) + '%') : 'set Alpaca keys'}</div>
         </div>
         <div class="cell">
           <div class="label">Premium Sell</div>
@@ -1436,7 +1509,7 @@ function playCard(p) {
           </div>
           <div class="meta">${ucase(strategyLabel(p.strategy))} • Exp: ${escapeHtml(p.expiration)} (${p.dte} DTE)${p._scanCount ? ` • seen ${p._scanCount}× in deck` : ''}</div>
         </div>
-        <button class="gtc-btn" onclick="event.stopPropagation()">GTC close</button>
+        <button class="gtc-btn" onclick="event.stopPropagation(); showInstructionsById('${escapeHtml(p.id)}')">Order legs</button>
       </div>
       <div class="progress"><div class="bar" style="width:${Math.min(95, Math.max(15, ivPct))}%"></div></div>
       <div class="grid">
@@ -1464,10 +1537,27 @@ function playCard(p) {
         <p class="ai-text"><em class="muted">Loading Gemini reasoning…</em></p>
       </div>
       <div class="card-actions">
-        <button class="btn btn-secondary">Re-Analy</button>
-        <button class="btn btn-primary">Track Position</button>
+        <button class="btn btn-secondary" onclick="reAnalyze('${escapeHtml(p.id)}', this)">Re-Analyze</button>
+        <button class="btn btn-primary" onclick="showInstructionsById('${escapeHtml(p.id)}')">Place Order</button>
       </div>
     </div>`;
+}
+
+// Open the Manual Order Instructions modal for a play by id (used by the
+// header "Order legs" and card "Place Order" buttons + long-press).
+function showInstructionsById(id) {
+  const p = cachedPlays.find(x => x.id === id);
+  if (p) showInstructions(p);
+}
+
+// Re-run the AI analysis for a single play on demand.
+async function reAnalyze(id, btn) {
+  const p = cachedPlays.find(x => x.id === id);
+  if (!p) return;
+  const box = document.querySelector(`.ai-box[data-ai-for="${cssEscape(id)}"] .ai-text`);
+  if (box) box.innerHTML = `<em class="muted">Re-analyzing…</em>`;
+  if (btn) { btn.disabled = true; setTimeout(() => { btn.disabled = false; }, 1500); }
+  await loadAnalysis(p);
 }
 
 function computeMargin(p) {
@@ -1702,7 +1792,7 @@ function positionCard(p, ern) {
         <div class="top"><h3>${escapeHtml(p.ticker)}</h3></div>
         <div class="meta">${escapeHtml(p.strategyLabel)} • Exp: ${escapeHtml(p.expiration)}</div>
       </div>
-      <button class="gtc-btn">Close</button>
+      <button class="gtc-btn" onclick="showGtcTarget(${p.entryPremium}, '${escapeHtml(p.ticker)}', ${p.contracts || 1})">GTC exit</button>
     </div>
     <div class="grid">
       <div class="field"><div class="k">Underlying</div>
@@ -1719,6 +1809,18 @@ function positionCard(p, ern) {
         <div class="v ${profitDollars>=0?'green':'red'}">${money(profitDollars, 2)}</div></div>
     </div>
   </div>`;
+}
+
+// GTC exit guidance — the Fortress rule is buy-to-close at 50% of the credit
+// collected. Shows the exact limit price to set on the broker.
+function showGtcTarget(entryPremium, ticker, contracts) {
+  const target = (entryPremium * 0.5).toFixed(2);
+  const profit = (entryPremium * 0.5 * 100 * contracts).toFixed(0);
+  alert(`GTC exit for ${ticker}\n\n` +
+        `Set a Good-Til-Cancelled BUY-TO-CLOSE limit order at $${target} ` +
+        `(50% of the $${entryPremium.toFixed(2)} credit collected).\n\n` +
+        `Fills at ~$${profit} profit on ${contracts} contract(s), locking in ` +
+        `the win early and dodging expiration-week turbulence.`);
 }
 
 // ─── Earnings — Automated Blackout Gate ─────────────────────────────────────

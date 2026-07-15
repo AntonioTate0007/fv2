@@ -100,6 +100,12 @@ GEMINI_API_KEY=
 # Telegram bot — https://t.me/BotFather
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+
+# Optional: password-protect the web UI (browser Basic Auth). Leave blank
+# for no login (fine on a private Tailscale network). Set a value if you
+# expose the Cloudflare public URL. Username defaults to "admin".
+FORTRESS_UI_PASSWORD=
+FORTRESS_UI_USER=admin
 EOF
     chmod 600 .env
 fi
