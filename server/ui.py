@@ -366,16 +366,25 @@ def refresh_deck(reason: str = "manual") -> dict:
     # Belt-and-suspenders: hard-drop any play with a thin OTM moat before it
     # can reach the deck / UI / Telegram. Matches MIN_OTM_BUFFER=0.10 in the
     # scanner but is enforced here too so a bug anywhere upstream can't leak
-    # an unsafe setup into the operator's phone.
-    _MIN_MOAT = 0.10
+    # an unsafe setup into the operator's phone. Iron condors use the priced-in
+    # expected move as their floor instead of a blanket 10% (mirrors the UI
+    # moatFloorFor logic) — the scanner emits only ETF spreads today so this
+    # branch is dormant until condors are added.
+    def _moat_floor(p: dict) -> float:
+        if "CONDOR" in str(p.get("strategy", "")).upper():
+            em = p.get("expectedMovePct")
+            return em if (em and em > 0) else 0.05
+        return 0.10
+
     safe = []
     for p in fresh:
         buf = p.get("safetyBufferPct") or 0
-        if buf < _MIN_MOAT:
+        floor = _moat_floor(p)
+        if buf < floor:
             add_log(
                 f"Moat gate: dropped {p.get('id','?')} "
                 f"({p.get('ticker','?')} short ${p.get('shortStrike','?')} "
-                f"buf={buf*100:.1f}% < 10.0% floor)",
+                f"buf={buf*100:.1f}% < {floor*100:.1f}% floor)",
                 "error",
             )
             continue
@@ -1466,23 +1475,44 @@ function cssEscape(s) {
 // scanner filter.
 const MIN_MOAT_FOR_TIER = 0.10;
 
+// The required moat floor is 10% for the ETF credit spreads the scanner
+// produces today. Iron condors (earnings plays, when the scanner gains them)
+// are a special case: the expected move is already priced into the immediate
+// chain, so a 4.5% expected move means strikes 5% out is a *good* trade even
+// though it's under 10%. For a condor we therefore require the short strikes
+// to clear the expected move (from p.expectedMovePct) instead of a blanket
+// 10%. Everything the bot currently emits is a spread → unchanged behaviour.
+function moatFloorFor(p) {
+  const strat = (p.strategy || "").toUpperCase();
+  if (strat.includes("CONDOR")) {
+    const em = p.expectedMovePct;
+    if (em != null && em > 0) return em;   // clear the priced-in expected move
+    return 0.05;                            // conservative fallback if EM unknown
+  }
+  return MIN_MOAT_FOR_TIER;
+}
+
 function ratePlay(p) {
   const pop = p.probabilityOfProfit || 0;
   const buf = p.safetyBufferPct || 0;
   const delta = (p.shortDelta != null) ? Math.abs(p.shortDelta) : (1 - pop);
+  const floor = moatFloorFor(p);
+  const isCondor = (p.strategy || "").toUpperCase().includes("CONDOR");
+  const floorLabel = isCondor ? `${(floor*100).toFixed(1)}% expected-move` : '10% Fortress';
 
-  // Hard veto: thin moat always demotes to RISKY regardless of POP / delta.
-  if (buf < MIN_MOAT_FOR_TIER) {
+  // Hard veto: moat below the (strategy-aware) floor demotes to RISKY
+  // regardless of POP / delta.
+  if (buf < floor) {
     return {emoji: '⚠', tag: 'RISKY', cls: 'rate-risk',
-            tip: `Moat ${(buf*100).toFixed(1)}% is below the 10% Fortress floor — skip.`};
+            tip: `Moat ${(buf*100).toFixed(1)}% is below the ${floorLabel} floor — skip.`};
   }
 
   // 🔥 amazing: deep buffer, high POP, low delta — premium worth taking.
-  if (pop >= 0.85 && buf >= 0.10 && delta <= 0.12) {
+  if (pop >= 0.85 && buf >= floor && delta <= 0.12) {
     return {emoji: '🔥', tag: 'AMAZING', cls: 'rate-fire', tip: 'Deep buffer, high probability of profit, low delta — premium worth taking.'};
   }
-  // 👍 ok: solid but not exceptional. Buffer floor still 10% (not 7%).
-  if (pop >= 0.75 && buf >= 0.10 && delta <= 0.18) {
+  // 👍 ok: solid but not exceptional.
+  if (pop >= 0.75 && buf >= floor && delta <= 0.18) {
     return {emoji: '👍', tag: 'OK', cls: 'rate-ok', tip: 'Probability and buffer are reasonable. Standard play.'};
   }
   // ⚠ risky: anything weaker — caller should think twice.
