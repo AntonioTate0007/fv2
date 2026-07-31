@@ -43,21 +43,19 @@ class FortressFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
-        val type = data["type"].orEmpty()
-        if (type != TYPE_PROFIT_TARGET) return
-
-        val positionId = data["positionId"].orEmpty()
-        val ticker = data["ticker"].orEmpty()
-        val profitPct = data["profitPct"]?.toDoubleOrNull() ?: 0.5
-        val premium = data["currentPremium"].orEmpty()
-
+        val id = data["id"].ifNullOrBlank { System.currentTimeMillis().toString() }
+        val title = data["title"].ifNullOrBlank { "Autopilot update" }
+        val body = data["body"].ifNullOrBlank { "Your portfolio made trades." }
         ensureChannel(this)
-        notify(this, positionId, ticker, profitPct, premium)
+        notify(this, id, title, body)
     }
 
+    private fun String?.ifNullOrBlank(fallback: () -> String): String =
+        if (this.isNullOrBlank()) fallback() else this
+
     companion object {
-        const val CHANNEL_ID = "fortress.profit_alerts"
-        const val TYPE_PROFIT_TARGET = "profit_target"
+        const val CHANNEL_ID = "fortress.trade_alerts"
+        const val TYPE_TRADE = "trade"
         private const val NOTIF_ID_BASE = 1_000
 
         fun registerCurrentToken(token: String) {
@@ -82,51 +80,29 @@ class FortressFirebaseMessagingService : FirebaseMessagingService() {
             )
         }
 
-        fun notify(
-            ctx: Context,
-            positionId: String,
-            ticker: String,
-            profitPct: Double,
-            premium: String
-        ) {
+        fun notify(ctx: Context, id: String, title: String, body: String) {
             val tapIntent = Intent(ctx, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("positionId", positionId)
+                putExtra("deeplink", "activity")
             }
             val tapPi = PendingIntent.getActivity(
-                ctx, positionId.hashCode(), tapIntent,
+                ctx, id.hashCode(), tapIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val closeIntent = Intent(ctx, CloseTradeReceiver::class.java).apply {
-                action = CloseTradeReceiver.ACTION_CLOSE
-                putExtra(CloseTradeReceiver.EXTRA_POSITION_ID, positionId)
-                putExtra(CloseTradeReceiver.EXTRA_NOTIF_ID, NOTIF_ID_BASE + positionId.hashCode())
-            }
-            val closePi = PendingIntent.getBroadcast(
-                ctx, positionId.hashCode() + 1, closeIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val pct = (profitPct * 100).toInt()
             val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
-                .setContentTitle("$ticker hit ${pct}% profit")
-                .setContentText("Current premium $premium — tap to close at market.")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setContentTitle("🤖 $title")
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setContentIntent(tapPi)
-                .addAction(
-                    android.R.drawable.ic_menu_close_clear_cancel,
-                    ctx.getString(R.string.action_close_position),
-                    closePi
-                )
                 .setAutoCancel(true)
                 .build()
 
             ContextCompat.getSystemService(ctx, NotificationManager::class.java)
-                ?.notify(NOTIF_ID_BASE + positionId.hashCode(), notification)
+                ?.notify(NOTIF_ID_BASE + id.hashCode(), notification)
         }
     }
 }

@@ -20,7 +20,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -29,14 +28,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.fortress.app.ui.navigation.FortressDestination
-import com.fortress.app.ui.screens.armory.ArmoryScreen
-import com.fortress.app.ui.screens.chat.ChatScreen
-import com.fortress.app.ui.screens.radar.RadarScreen
+import com.fortress.app.ui.screens.activity.ActivityScreen
+import com.fortress.app.ui.screens.discover.DiscoverScreen
+import com.fortress.app.ui.screens.home.HomeScreen
 import com.fortress.app.ui.screens.settings.SettingsScreen
-import com.fortress.app.ui.theme.FortressBorder
 import com.fortress.app.ui.theme.FortressTheme
-import com.fortress.app.ui.theme.TextPrimary
-import com.fortress.app.ui.theme.TextTertiary
 
 /**
  * Hosts the entire Compose tree. Inherits from [FragmentActivity] so [BiometricPrompt]
@@ -81,7 +77,7 @@ private fun FortressRoot() {
     Scaffold(
         bottomBar = {
             NavigationBar(
-                containerColor = Color.White,
+                containerColor = MaterialTheme.colorScheme.surface,
                 tonalElevation = 0.dp
             ) {
                 FortressDestination.All.forEach { dest ->
@@ -100,11 +96,11 @@ private fun FortressRoot() {
                         icon = { Icon(dest.icon, contentDescription = dest.label) },
                         label = { Text(dest.label) },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = TextPrimary,
-                            unselectedIconColor = TextTertiary,
-                            selectedTextColor = TextPrimary,
-                            unselectedTextColor = TextTertiary,
-                            indicatorColor = FortressBorder
+                            selectedIconColor = MaterialTheme.colorScheme.onSurface,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     )
                 }
@@ -116,9 +112,9 @@ private fun FortressRoot() {
             startDestination = FortressDestination.Start.route,
             modifier = Modifier.fillMaxSize()
         ) {
-            composable(FortressDestination.Radar.route) { RadarScreen(contentPadding = padding) }
-            composable(FortressDestination.Armory.route) { ArmoryScreen(contentPadding = padding) }
-            composable(FortressDestination.Officer.route) { ChatScreen(contentPadding = padding) }
+            composable(FortressDestination.Home.route) { HomeScreen(contentPadding = padding) }
+            composable(FortressDestination.Discover.route) { DiscoverScreen(contentPadding = padding) }
+            composable(FortressDestination.Activity.route) { ActivityScreen(contentPadding = padding) }
             composable(FortressDestination.Settings.route) { SettingsScreen(contentPadding = padding) }
         }
     }
