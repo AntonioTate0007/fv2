@@ -6,6 +6,9 @@
 /build
 /app/build
 /captures
+mark39/build/
+mark39/app/build/
+mark39/.gradle/
 .externalNativeBuild
 .cxx
 local.properties

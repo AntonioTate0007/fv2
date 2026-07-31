@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns the real theming; this base keeps the system bars dark to match
+         the app's arc-reactor aesthetic before Compose takes over. -->
+    <style name="Theme.Mark39" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#070D14</item>
+        <item name="android:navigationBarColor">#070D14</item>
+        <item name="android:windowBackground">#070D14</item>
+    </style>
+</resources>

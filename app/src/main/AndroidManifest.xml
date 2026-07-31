@@ -6,6 +6,14 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Jarvis assistant: exact-time reminders, re-arm after reboot, read the
+         on-device calendar for agenda + briefings. RECORD_AUDIO is intentionally
+         NOT required — voice input uses the system speech-recognizer dialog. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
     <application
         android:name=".FortressApp"
         android:allowBackup="true"
@@ -42,6 +50,26 @@
         <receiver
             android:name=".notification.CloseTradeReceiver"
             android:exported="false" />
+
+        <!-- Jarvis: reminder alarms fire here. -->
+        <receiver
+            android:name=".jarvis.ReminderReceiver"
+            android:exported="false" />
+
+        <!-- Jarvis: the once-a-day briefing alarm fires here. -->
+        <receiver
+            android:name=".jarvis.DailyBriefingReceiver"
+            android:exported="false" />
+
+        <!-- Jarvis: re-arm reminders + briefing after a reboot. -->
+        <receiver
+            android:name=".jarvis.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
     </application>
 
