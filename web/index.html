@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0D1117" />
+  <title>Fortress AI — Options Command Center</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230D1117'/%3E%3Cpath d='M37 28 L68 28 L68 38 L47 38 L47 48 L65 48 L65 58 L47 58 L47 74 L37 74 Z' fill='%2300E676'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --black: #0D1117;
+      --surface: #161B22;
+      --surface-2: #1C232C;
+      --border: #21262D;
+      --green: #00E676;
+      --orange: #FFA726;
+      --red: #FF5252;
+      --gray: #8B949E;
+      --text: #E6EDF3;
+      --text-dim: #8B949E;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--black);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .app {
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .screen {
+      flex: 1;
+      padding: 20px 16px calc(96px + env(safe-area-inset-bottom));
+      overflow-y: auto;
+      display: none;
+      animation: fade 0.18s ease;
+    }
+    .screen.active { display: block; }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    h1.brand { color: var(--green); font-size: 28px; font-weight: 800; margin: 0; letter-spacing: 0.5px; }
+    .subtitle { color: var(--text-dim); font-size: 14px; margin: 2px 0 0; }
+    h2.screen-title { font-size: 24px; font-weight: 700; margin: 0 0 16px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+    .card-label { color: var(--text-dim); font-size: 14px; font-weight: 600; margin: 0; }
+    .card-big { font-size: 30px; font-weight: 800; margin: 4px 0 0; }
+    .row { display: flex; align-items: center; justify-content: space-between; }
+    .muted { color: var(--text-dim); }
+    .green { color: var(--green); }
+    .orange { color: var(--orange); }
+    .red { color: var(--red); }
+
+    .badge {
+      font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+      padding: 4px 10px; border-radius: 8px; white-space: nowrap;
+    }
+    .ticker { font-size: 22px; font-weight: 800; margin: 0; }
+    .strategy { color: var(--text-dim); margin: 2px 0 0; font-size: 14px; }
+    .premium { margin: 8px 0 0; font-size: 14px; }
+
+    .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+    .conn-title { font-size: 16px; font-weight: 600; margin: 6px 0 0; display: flex; align-items: center; }
+
+    /* Bottom navigation */
+    nav.tabbar {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      max-width: 480px; margin: 0 auto;
+      background: rgba(22,27,34,0.95);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border);
+      display: flex;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    nav.tabbar button {
+      flex: 1; background: none; border: none; color: var(--text-dim);
+      padding: 10px 0 12px; cursor: pointer; font-size: 11px; font-weight: 600;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      transition: color 0.15s;
+    }
+    nav.tabbar button .ico { width: 24px; height: 24px; display: block; }
+    nav.tabbar button.active { color: var(--green); }
+    nav.tabbar button .ico path,
+    nav.tabbar button .ico rect,
+    nav.tabbar button .ico polygon { fill: currentColor; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Dashboard -->
+    <section id="dashboard" class="screen active">
+      <h1 class="brand">FORTRESS AI</h1>
+      <p class="subtitle">Options Command Center</p>
+
+      <div class="card">
+        <p class="card-label">Portfolio Value</p>
+        <p class="card-big" id="pv"></p>
+        <p class="green" id="pv-change" style="margin:6px 0 0;font-weight:600;"></p>
+      </div>
+
+      <div class="card">
+        <p class="card-label orange" style="font-size:16px;font-weight:700;">⚠ Earnings Lockout</p>
+        <p style="margin:8px 0 0;">ORCL earnings within 24 hours.</p>
+        <p class="muted" style="margin:4px 0 0;">AI Recommendation: Close before earnings.</p>
+      </div>
+    </section>
+
+    <!-- Portfolio -->
+    <section id="portfolio" class="screen">
+      <h2 class="screen-title">Portfolio</h2>
+      <div id="positions"></div>
+    </section>
+
+    <!-- Risk -->
+    <section id="risk" class="screen">
+      <h2 class="screen-title orange">Risk Center</h2>
+
+      <div class="card">
+        <p class="card-label">Portfolio Risk Score</p>
+        <p class="card-big green" id="risk-score"></p>
+        <p class="muted" style="margin:4px 0 0;">Low overall exposure</p>
+      </div>
+
+      <div class="card">
+        <p class="card-label">Earnings Exposure</p>
+        <div id="earnings" style="margin-top:8px;"></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="settings" class="screen">
+      <h2 class="screen-title">Settings</h2>
+      <div id="connections"></div>
+    </section>
+
+    <!-- Bottom nav -->
+    <nav class="tabbar">
+      <button data-tab="dashboard" class="active">
+        <svg class="ico" viewBox="0 0 24 24"><polygon points="8,5 19,12 8,19"/></svg>
+        Dashboard
+      </button>
+      <button data-tab="portfolio">
+        <svg class="ico" viewBox="0 0 24 24"><rect x="4" y="11" width="4" height="9"/><rect x="10" y="6" width="4" height="14"/><rect x="16" y="9" width="4" height="11"/></svg>
+        Portfolio
+      </button>
+      <button data-tab="risk">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 2 L22 20 L2 20 Z M11 9 h2 v6 h-2 Z M11 16 h2 v2 h-2 Z"/></svg>
+        Risk
+      </button>
+      <button data-tab="settings">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4a7 7 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2l-.4-2.6H9.9l-.4 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 003 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2l.4 2.6h4.2l.4-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
+        Settings
+      </button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

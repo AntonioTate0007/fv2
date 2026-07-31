@@ -1,0 +1,46 @@
+name: Deploy Fortress Web App
+
+# Pages can only deploy after the repo owner enables it once:
+#   Settings → Pages → Source → "GitHub Actions".
+# Until then this workflow will fail, so it is scoped to main + manual runs
+# to avoid red checks on feature-branch PRs.
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "web/**", ".github/workflows/deploy-web.yml" ]
+  workflow_dispatch:
+
+# Allow the workflow to publish to GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One concurrent deployment; let in-progress runs finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload web/ as Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
