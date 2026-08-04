@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pumps</string>
+
+    <!-- Notification channels -->
+    <string name="channel_pump_alerts">Pump alerts</string>
+    <string name="channel_pump_alerts_desc">Notifies you when a small-cap stock crosses the alert score threshold.</string>
+
+    <!-- UI -->
+    <string name="header_title">Pumps</string>
+    <string name="header_subtitle">Small-cap pre-runup screener</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_settings">Settings</string>
+    <string name="empty_state">No candidates match the filters right now. Markets may be closed, or nothing fits the pattern.</string>
+    <string name="pill_live">LIVE</string>
+    <string name="pill_mock">MOCK</string>
+    <string name="pill_offline">OFFLINE</string>
+</resources>
