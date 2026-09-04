@@ -25,3 +25,6 @@ server/.env
 
 # Crash dumps
 hs_err_pid*.log
+phone/.env
+phone/.venv/
+.pytest_cache/
