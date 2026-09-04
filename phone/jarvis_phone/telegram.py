@@ -13,6 +13,7 @@ import httpx
 
 from .agent import Agent, Outgoing
 from .config import Settings
+from .transcribe import GeminiTranscriber
 
 log = logging.getLogger("jarvis.telegram")
 API = "https://api.telegram.org"
@@ -28,6 +29,8 @@ Just talk to me. Things I understand:
 • note: buy milk · notes · clear notes
 • how am I doing · positions · run the swarm (needs Fortress)
 
+Send a *voice note* and I'll transcribe it (needs GEMINI_API_KEY).
+
 Commands: /help /tools /brain /speak on|off /forget /whoami"""
 
 
@@ -38,6 +41,7 @@ class TelegramBot:
         self.token = s.telegram_token
         self.owner = s.telegram_chat_id
         self._offset = 0
+        self.transcriber = GeminiTranscriber(s.gemini_api_key, s.gemini_model)
 
     # ── outbound ──────────────────────────────────────────────────────────
     async def send_text(self, chat_id: str, text: str, markdown: bool = True) -> bool:
@@ -101,6 +105,19 @@ class TelegramBot:
             await asyncio.sleep(5)
             return []
 
+    async def download(self, file_id: str) -> Optional[bytes]:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as c:
+                r = await c.get(f"{API}/bot{self.token}/getFile", params={"file_id": file_id})
+                r.raise_for_status()
+                path = r.json()["result"]["file_path"]
+                f = await c.get(f"{API}/file/bot{self.token}/{path}")
+                f.raise_for_status()
+                return f.content
+        except Exception as e:
+            log.warning("download failed: %s", e)
+            return None
+
     async def me(self) -> Optional[str]:
         try:
             async with httpx.AsyncClient(timeout=15.0) as c:
@@ -117,8 +134,16 @@ class TelegramBot:
             return
         chat_id = str(msg.get("chat", {}).get("id", ""))
         text = (msg.get("text") or msg.get("caption") or "").strip()
-        if not chat_id or not text:
+        voice = msg.get("voice") or msg.get("audio")
+        if not chat_id or not (text or voice):
             return
+        if voice and not text:
+            if chat_id != self.owner:
+                await self.send_text(chat_id, "I only take orders from my principal.")
+                return
+            text = await self._transcribe(chat_id, voice)
+            if not text:
+                return
         cmd, _, arg = text.partition(" ")
         cmd = cmd.lower().lstrip("/").split("@")[0]
         arg = arg.strip()
@@ -161,6 +186,22 @@ class TelegramBot:
 
         for out in await self.agent.handle(text, chat_id):
             await self.deliver(chat_id, out)
+
+    async def _transcribe(self, chat_id: str, voice: dict) -> str:
+        if not self.transcriber.available:
+            await self.send_text(chat_id, "I can't hear voice notes without GEMINI_API_KEY "
+                                          "— type it instead.")
+            return ""
+        audio = await self.download(voice.get("file_id", ""))
+        if not audio:
+            await self.send_text(chat_id, "Couldn't download that voice note.")
+            return ""
+        text = await self.transcriber.transcribe(audio, voice.get("mime_type") or "audio/ogg")
+        if not text:
+            await self.send_text(chat_id, "I couldn't make out that voice note.")
+            return ""
+        await self.send_text(chat_id, f"🎤 _{text}_")
+        return text
 
     async def run(self) -> None:
         name = await self.me()

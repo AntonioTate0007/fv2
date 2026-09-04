@@ -4,19 +4,25 @@
     python -m jarvis_phone chat       # talk to Jarvis in the terminal
     python -m jarvis_phone doctor     # check Termux:API, model, Telegram, Fortress
     python -m jarvis_phone once "battery"   # run one message and exit
+    python -m jarvis_phone listen     # tap-to-talk: speech recogniser in, speaker out
+    python -m jarvis_phone listen --conversation   # keep listening until "bye"
+    python -m jarvis_phone type       # same, with a text dialog instead of the mic
+    python -m jarvis_phone panel      # (re)post the sticky notification with Talk/Type buttons
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 
 from . import __version__, termux
 from .agent import Agent, Outgoing
 from .config import settings
 from .fortress import Fortress
-from . import scheduler
+from . import scheduler, voice
+from .config import PHONE_DIR
 from .telegram import TelegramBot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -52,6 +58,30 @@ async def cmd_once(agent: Agent, text: str) -> None:
         await _print("local", out)
 
 
+def post_panel() -> bool:
+    """Sticky notification with Talk / Type buttons. Tapping runs the shortcut
+    scripts the installer drops in ~/.shortcuts (Termux:Widget uses the same)."""
+    home = os.path.expanduser("~")
+    talk = f"{home}/.shortcuts/Jarvis"
+    typ = f"{home}/.shortcuts/Jarvis-Type"
+    if not (os.path.exists(talk) and os.path.exists(typ)):
+        talk = f"cd {PHONE_DIR} && python -m jarvis_phone listen"
+        typ = f"cd {PHONE_DIR} && python -m jarvis_phone type"
+    try:
+        termux.ongoing_notification(settings.name, "Tap to talk",
+                                    [("🎤 Talk", talk), ("⌨️ Type", typ)])
+        return True
+    except termux.TermuxError as e:
+        log.debug("panel unavailable: %s", e)
+        return False
+
+
+async def cmd_listen(agent: Agent, args: list[str], typed: bool = False) -> None:
+    conversation = any(a in ("--conversation", "-c") for a in args)
+    n = await voice.listen(agent, conversation=conversation, typed=typed)
+    log.info("voice session: %d turn(s)", n)
+
+
 async def cmd_bot(agent: Agent) -> None:
     if not settings.telegram_token:
         print("TELEGRAM_BOT_TOKEN is not set. Fill in phone/.env, or use "
@@ -72,6 +102,7 @@ async def cmd_bot(agent: Agent) -> None:
         termux.wake_lock(True)
     except Exception:
         pass
+    post_panel()
     await asyncio.gather(bot.run(), scheduler.run(agent, settings, deliver))
 
 
@@ -91,6 +122,11 @@ async def cmd_doctor(agent: Agent) -> None:
         except Exception as e:
             row(False, "battery", str(e))
         row(termux.available("termux-tts-speak"), "tts", "termux-tts-speak")
+        row(termux.available("termux-dialog"), "voice input", "termux-dialog speech")
+        home = os.path.expanduser("~")
+        row(os.path.exists(f"{home}/.shortcuts/Jarvis") or None, "home shortcut",
+            "~/.shortcuts/Jarvis (Termux:Widget)" if os.path.exists(f"{home}/.shortcuts/Jarvis")
+            else "not installed — run setup-termux.sh")
     ok, msg = await agent.brain.healthy()
     row(ok, f"brain ({agent.brain.label})", msg)
     if settings.telegram_token:
@@ -119,6 +155,12 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(cmd_doctor(agent))
     elif cmd == "once":
         asyncio.run(cmd_once(agent, " ".join(argv[1:])))
+    elif cmd == "listen":
+        asyncio.run(cmd_listen(agent, argv[1:]))
+    elif cmd == "type":
+        asyncio.run(cmd_listen(agent, argv[1:], typed=True))
+    elif cmd == "panel":
+        print("panel posted" if post_panel() else "termux-notification not available")
     elif cmd in ("bot", "run"):
         asyncio.run(cmd_bot(agent))
     else:

@@ -2,9 +2,11 @@
 
 A Jarvis-style personal assistant that runs **on your Android phone**, inside
 [Termux](https://termux.dev). It controls the phone through
-[Termux:API](https://wiki.termux.com/wiki/Termux:API), takes orders over
-**Telegram** (or the terminal), speaks through the phone's own text-to-speech, and
-can report on your [Fortress](../server) trading account.
+[Termux:API](https://wiki.termux.com/wiki/Termux:API), listens through Android's
+speech recogniser from a **home-screen button** or a **notification**, takes orders
+over **Telegram** (text or voice notes) or the terminal, speaks through the phone's
+own text-to-speech, and can report on your [Fortress](../server) trading account.
+No Android app to build: everything is Termux add-ons plus Python.
 
 The everyday commands never touch a model: a rules router handles them instantly,
 offline. Anything it doesn't recognise goes to a **local model** running on the
@@ -12,7 +14,10 @@ phone (llama.cpp, Cactus, anything OpenAI-compatible) and, if that's not running
 to **Gemini**. Each layer is optional.
 
 ```
- Telegram / terminal
+ home-screen button ─► speech recogniser ─┐
+ notification Talk/Type buttons ──────────┤
+ Telegram text / voice note ──────────────┤
+ terminal ────────────────────────────────┘
         │
         ▼
     ┌───────┐   rules ──► local model ──► Gemini        (first answer wins)
@@ -26,8 +31,9 @@ to **Gemini**. Each layer is optional.
 
 ## Install (on the phone)
 
-Install **Termux** and **Termux:API** from F-Droid (the Play Store builds are
-abandoned and won't work). Optionally **Termux:Boot** for autostart. Then in Termux:
+Install **Termux**, **Termux:API** and **Termux:Widget** from F-Droid (the Play
+Store builds are abandoned and won't work). Optionally **Termux:Boot** for
+autostart. Then in Termux:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/AntonioTate0007/fv2/main/phone/setup-termux.sh | bash
@@ -48,6 +54,24 @@ Message your bot `/start`. It replies with your chat id; put that in
 
 No Telegram? Talk to it in the terminal: `python -m jarvis_phone chat`.
 
+## Talking to it on the phone
+
+- **Home-screen button.** Long-press the launcher → Widgets → *Termux:Widget* →
+  drop the **Jarvis** shortcut. Tap it: Android's speech recogniser opens, you
+  speak, Jarvis acts and answers out loud (plus a toast). **Jarvis-Conversation**
+  keeps the mic open after each answer until you say "bye". **Jarvis-Type** uses a
+  text box instead of the mic.
+- **Notification panel.** While the bot runs, a sticky low-priority notification
+  offers **🎤 Talk** and **⌨️ Type** buttons, so it is one swipe away on any screen.
+- **Telegram voice notes.** Hold the mic in Telegram and talk. With
+  `GEMINI_API_KEY` set the note is transcribed, echoed back as text, and handled
+  like a typed message. Without a key you get a polite "type it instead".
+- **Confirmations work by voice too.** "Text mom: running late" → "Reply yes to
+  confirm" → say "yes".
+
+What it is not: there is no always-on wake word. Termux cannot keep a
+microphone open in the background, so listening starts from a tap.
+
 ## What it understands
 
 | Say | Does |
@@ -63,7 +87,8 @@ No Telegram? Talk to it in the terminal: `python -m jarvis_phone chat`.
 | anything else | goes to the model, which can also pick a tool |
 
 Commands: `/help` `/tools` `/brain` (which brains are up) `/speak on|off` (read every
-reply aloud) `/forget` (wipe short-term memory) `/whoami`.
+Telegram reply aloud on the phone) `/forget` (wipe short-term memory) `/whoami`.
+Voice sessions always speak, regardless of `/speak`.
 
 Dangerous tools (`sms_send`, `clear_notes`) ask for a **yes** before running. The
 confirmation is per chat and expires after two minutes.
@@ -135,7 +160,7 @@ mode; this assistant never flips it.
 cd phone
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pytest pytest-asyncio
-pytest                        # 65 tests, all Termux calls are faked
+pytest                        # all Termux calls are faked
 python -m jarvis_phone once "battery"   # off-phone: "Phone says no: termux-… isn't installed"
 ```
 
@@ -150,11 +175,13 @@ jarvis_phone/
     rules.py      regex intent router
     llm.py        LocalLLMBrain (OpenAI-compatible) + GeminiBrain + shared JSON parser
     auto.py       chain-of-brains + factory
-  telegram.py     long-polling bot, owner gate, /commands
+  telegram.py     long-polling bot, owner gate, /commands, voice-note transcription
+  voice.py        tap-to-talk session (termux-dialog speech → agent → termux-tts-speak)
+  transcribe.py   Gemini speech-to-text for Telegram voice notes
   scheduler.py    reminders + optional morning brief
   memory.py       JSON store: history, notes, reminders, prefs
   fortress.py     client for server/main.py
-  __main__.py     bot | chat | doctor | once
+  __main__.py     bot | chat | doctor | once | listen | type | panel
 ```
 
 Adding a tool is one `reg.add(Tool(...))` in `tools.py` plus, optionally, a regex in

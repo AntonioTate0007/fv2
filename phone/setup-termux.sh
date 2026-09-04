@@ -11,11 +11,14 @@
 #   3. Scaffolds phone/.env for you to fill in
 #   4. Optionally installs llama.cpp so a small local model can be the brain
 #   5. Installs a Termux:Boot script so Jarvis starts when the phone boots
+#   6. Drops Termux:Widget shortcuts (~/.shortcuts/Jarvis) for tap-to-talk from the
+#      home screen — the same scripts back the sticky notification's buttons
 #
 # Prerequisites (install from F-Droid, NOT Play Store — the Play build is stale):
 #   • Termux            https://f-droid.org/packages/com.termux/
 #   • Termux:API        https://f-droid.org/packages/com.termux.api/
-#   • Termux:Boot       https://f-droid.org/packages/com.termux.boot/   (optional, autostart)
+#   • Termux:Widget     https://f-droid.org/packages/com.termux.widget/  (home-screen Jarvis button)
+#   • Termux:Boot       https://f-droid.org/packages/com.termux.boot/    (optional, autostart)
 #
 # Safe to re-run: everything is idempotent and won't overwrite an existing .env.
 
@@ -87,6 +90,25 @@ cd "$PHONE_DIR" && nohup ./run.sh > "$HOME/jarvis.log" 2>&1 &
 BOOT
 chmod +x "$BOOT_DIR/jarvis.sh" "$PHONE_DIR/run.sh"
 
+# ── 6. Home-screen shortcuts (Termux:Widget) ──────────────────────────────────
+SHORTCUTS="$HOME/.shortcuts"
+mkdir -p "$SHORTCUTS/tasks"
+cat > "$SHORTCUTS/Jarvis" <<SC
+#!/data/data/com.termux/files/usr/bin/bash
+# Tap → Android speech recogniser → Jarvis acts → speaks the reply.
+cd "$PHONE_DIR" && exec python -m jarvis_phone listen
+SC
+cat > "$SHORTCUTS/Jarvis-Type" <<SC
+#!/data/data/com.termux/files/usr/bin/bash
+cd "$PHONE_DIR" && exec python -m jarvis_phone type
+SC
+cat > "$SHORTCUTS/Jarvis-Conversation" <<SC
+#!/data/data/com.termux/files/usr/bin/bash
+# Keeps listening after each answer until you say "bye".
+cd "$PHONE_DIR" && exec python -m jarvis_phone listen --conversation
+SC
+chmod +x "$SHORTCUTS"/Jarvis*
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 cat <<DONE
 
@@ -100,6 +122,11 @@ $(printf '\033[1;32m✓ Jarvis Phone is installed.\033[0m')
 
   Try it in the terminal first, no Telegram needed:
        python -m jarvis_phone chat
+
+  Tap-to-talk from the home screen: long-press the launcher → Widgets →
+  Termux:Widget → drop the "Jarvis" shortcut. Tapping it opens the speech
+  recogniser; Jarvis answers out loud. While the bot runs, a sticky
+  notification also offers Talk / Type buttons.
 
   Keep it alive: Android Settings → Apps → Termux → Battery → Unrestricted.
   Autostart on boot needs the Termux:Boot app opened once after install.

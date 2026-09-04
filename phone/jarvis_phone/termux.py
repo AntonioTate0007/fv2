@@ -144,3 +144,39 @@ def shell(argv: Sequence[str], timeout: float = 10.0) -> str:
         raise TermuxError(f"{argv[0]} is not available")
     p = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout)
     return p.stdout.strip()
+
+
+# ── Dialogs (voice + text input through Android UI) ────────────────────────────
+
+def dialog_speech(title: str = "Listening…", timeout: float = 30.0) -> str:
+    """Pop Android's speech recogniser and return what was heard ('' if nothing,
+    cancelled, or no recogniser). Uses the phone's own on-device/Google engine."""
+    data = run_json("termux-dialog", "speech", "-t", title, timeout=timeout)
+    if not isinstance(data, dict) or data.get("code", 0) not in (0, "0"):
+        return ""
+    return (data.get("text") or "").strip()
+
+
+def dialog_text(title: str = "Ask Jarvis", hint: str = "", timeout: float = 120.0) -> str:
+    args = ["text", "-t", title]
+    if hint:
+        args += ["-i", hint]
+    data = run_json("termux-dialog", *args, timeout=timeout)
+    if not isinstance(data, dict) or data.get("code", 0) not in (0, "0", -1, "-1"):
+        return ""
+    return (data.get("text") or "").strip()
+
+
+def ongoing_notification(title: str, content: str, buttons: list[tuple[str, str]],
+                         notif_id: str = "jarvis-panel") -> None:
+    """A sticky notification with up to three action buttons. Each button runs a
+    shell command inside Termux when tapped."""
+    args = ["--id", notif_id, "--ongoing", "--alert-once", "--priority", "low",
+            "--title", title, "--content", content]
+    for i, (label, cmd) in enumerate(buttons[:3], start=1):
+        args += [f"--button{i}", label, f"--button{i}-action", cmd]
+    run("termux-notification", *args)
+
+
+def remove_notification(notif_id: str) -> None:
+    run("termux-notification-remove", notif_id)
