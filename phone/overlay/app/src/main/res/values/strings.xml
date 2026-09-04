@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jarvis Overlay</string>
+    <string name="channel_name">Jarvis floating HUD</string>
+    <string name="notif_title">Jarvis is standing by</string>
+    <string name="notif_text">Tap the ring to talk. Long-press it for settings.</string>
+    <string name="action_talk">Talk</string>
+</resources>

@@ -72,6 +72,40 @@ No Telegram? Talk to it in the terminal: `python -m jarvis_phone chat`.
 What it is not: there is no always-on wake word. Termux cannot keep a
 microphone open in the background, so listening starts from a tap.
 
+## The floating ring (Jarvis Overlay)
+
+`phone/overlay/` is a tiny **separate** Android app (plain Views, zero
+dependencies, nothing to do with the Fortress app) that floats an arc-reactor
+ring over every screen:
+
+- **Idle:** translucent, slow tick rotation, faint breathing.
+- **Listening:** full opacity, a wave runs around the ring.
+- **Thinking:** three arcs orbit.
+- **Speaking:** the bars jump like an audio spectrum, the core pulses, and the
+  last sentence appears in a caption under the ring, then fades.
+- **Drag** it anywhere (it snaps to the nearest side). **Tap** to talk: the ring
+  runs `~/.shortcuts/Jarvis` inside Termux. **Long-press** for its settings.
+- Its notification also carries a *Talk* button.
+
+Jarvis drives it with Android broadcasts through Termux's `am` command; the
+`overlay.py` bridge wraps every spoken reply and the tap-to-talk session, so
+the ring lights up for exactly as long as the phone is talking. With no app or no
+`am`, the calls are silent no-ops.
+
+Install:
+
+1. Get the APK: the **overlay-apk** GitHub Action builds it on every push that
+   touches `phone/overlay/` (download it from the workflow run's artifacts), or
+   open `phone/overlay` in Android Studio and run *assembleDebug*.
+2. Install it, open it, grant **draw over other apps** and **run Termux
+   commands**, tap **Start floating Jarvis**. The *Test* button cycles the states.
+3. `setup-termux.sh` already sets `allow-external-apps = true` in
+   `~/.termux/termux.properties`, which Termux requires before another app can
+   launch a script. Re-run the installer (or add the line) if you set up Termux
+   before this feature existed.
+4. From Termux, `python -m jarvis_phone overlay speaking "hello"` drives the
+   ring by hand. Battery-wise: the ring renders at a low frame rate when idle.
+
 ## What it understands
 
 | Say | Does |
@@ -181,7 +215,9 @@ jarvis_phone/
   scheduler.py    reminders + optional morning brief
   memory.py       JSON store: history, notes, reminders, prefs
   fortress.py     client for server/main.py
-  __main__.py     bot | chat | doctor | once | listen | type | panel
+  overlay.py      broadcasts idle/listening/thinking/speaking to the floating ring app
+  __main__.py     bot | chat | doctor | once | listen | type | panel | overlay
+overlay/          the floating-ring Android app (standalone Gradle project)
 ```
 
 Adding a tool is one `reg.add(Tool(...))` in `tools.py` plus, optionally, a regex in

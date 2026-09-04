@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import termux
+from . import overlay, termux
 from .brain import Brain, Context, Plan, make_brain
 from .config import Settings, settings as default_settings
 from .fortress import Fortress
@@ -144,6 +144,7 @@ class Agent:
         if not say:
             return
         try:
-            termux.speak(say[:400])
+            with overlay.speaking_while(say):
+                termux.speak(say[:400])
         except Exception as e:
             log.debug("tts unavailable: %s", e)

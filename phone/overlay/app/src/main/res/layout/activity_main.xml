@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B1016"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <com.fortress.jarvis.overlay.ReactorView
+            android:id="@+id/preview"
+            android:layout_width="180dp"
+            android:layout_height="220dp"
+            android:layout_gravity="center_horizontal" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="@string/app_name"
+            android:textColor="#9FF2FF"
+            android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:fontFamily="monospace"
+            android:textColor="#C8D6E0"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btn_overlay_perm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="1. Allow drawing over other apps" />
+
+        <Button
+            android:id="@+id/btn_termux_perm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="2. Allow running Termux commands" />
+
+        <Button
+            android:id="@+id/btn_start"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Start floating Jarvis" />
+
+        <Button
+            android:id="@+id/btn_stop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Stop" />
+
+        <Button
+            android:id="@+id/btn_test"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Test: listen → think → speak" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:textColor="#7F8C97"
+            android:textSize="12sp"
+            android:text="In Termux, phone/setup-termux.sh sets allow-external-apps=true so the ring can launch Jarvis. Jarvis drives the ring with: am broadcast -n com.fortress.jarvis.overlay/.StateReceiver -a com.fortress.jarvis.overlay.STATE --es state speaking" />
+    </LinearLayout>
+</ScrollView>

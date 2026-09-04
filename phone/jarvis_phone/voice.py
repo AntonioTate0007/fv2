@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 
-from . import termux
+from . import overlay, termux
 from .agent import Agent, Outgoing
 
 log = logging.getLogger("jarvis.voice")
@@ -23,7 +23,8 @@ def _say(text: str) -> None:
     clean = re.sub(r"https?://\S+", "", clean).strip()
     if clean:
         try:
-            termux.speak(clean[:400])
+            with overlay.speaking_while(clean):
+                termux.speak(clean[:400])
         except termux.TermuxError as e:
             log.warning("tts failed: %s", e)
 
@@ -54,26 +55,33 @@ async def listen(agent: Agent, *, conversation: bool = False, typed: bool = Fals
     turns = 0
     title = f"{agent.settings.name} is listening…"
     while turns < max_turns:
+        overlay.listening()
         try:
             heard = (termux.dialog_text(f"Ask {agent.settings.name}") if typed
                      else termux.dialog_speech(title))
         except termux.TermuxError as e:
+            overlay.idle()
             _say("I can't hear you — the Termux API app isn't responding.")
             log.warning("%s", e)
             return turns
         if not heard:
+            overlay.idle()
             if turns == 0:
                 _say("I didn't catch that.")
             return turns
         log.info("heard: %s", heard)
+        overlay.thinking()
         turns += 1
         if BYE.search(heard) and agent._pending.get(CHAT_ID) is None:
             _say("Goodbye.")
+            overlay.idle()
             return turns
         outs = await agent.handle(heard, CHAT_ID)
         await _respond(agent, outs)
+        overlay.idle()
         # keep the mic open while a confirmation is pending, or in conversation mode
         if not conversation and CHAT_ID not in agent._pending:
             return turns
         title = "Anything else?"
+    overlay.idle()
     return turns

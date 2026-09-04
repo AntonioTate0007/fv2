@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the ring start a Termux script (tap → talk). Termux must have
+         allow-external-apps=true in ~/.termux/termux.properties. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Floating assistant HUD driven by a local Termux process" />
+        </service>
+
+        <!-- Termux drives the ring with:
+             am broadcast -n com.fortress.jarvis.overlay/.StateReceiver \
+                -a com.fortress.jarvis.overlay.STATE --es state speaking --es text "Hello" -->
+        <receiver
+            android:name=".StateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.fortress.jarvis.overlay.STATE" />
+                <action android:name="com.fortress.jarvis.overlay.TALK" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

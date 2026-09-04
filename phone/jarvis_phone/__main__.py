@@ -8,6 +8,7 @@
     python -m jarvis_phone listen --conversation   # keep listening until "bye"
     python -m jarvis_phone type       # same, with a text dialog instead of the mic
     python -m jarvis_phone panel      # (re)post the sticky notification with Talk/Type buttons
+    python -m jarvis_phone overlay speaking "hello"   # drive the floating ring by hand
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from . import __version__, termux
 from .agent import Agent, Outgoing
 from .config import settings
 from .fortress import Fortress
-from . import scheduler, voice
+from . import overlay, scheduler, voice
 from .config import PHONE_DIR
 from .telegram import TelegramBot
 
@@ -123,6 +124,9 @@ async def cmd_doctor(agent: Agent) -> None:
             row(False, "battery", str(e))
         row(termux.available("termux-tts-speak"), "tts", "termux-tts-speak")
         row(termux.available("termux-dialog"), "voice input", "termux-dialog speech")
+        row(overlay.available() or None, "overlay bridge",
+            "`am` found — install phone/overlay APK for the floating ring" if overlay.available()
+            else "`am` not found (pkg install termux-am)")
         home = os.path.expanduser("~")
         row(os.path.exists(f"{home}/.shortcuts/Jarvis") or None, "home shortcut",
             "~/.shortcuts/Jarvis (Termux:Widget)" if os.path.exists(f"{home}/.shortcuts/Jarvis")
@@ -161,6 +165,11 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(cmd_listen(agent, argv[1:], typed=True))
     elif cmd == "panel":
         print("panel posted" if post_panel() else "termux-notification not available")
+    elif cmd == "overlay":
+        state = argv[1] if len(argv) > 1 else "idle"
+        text = " ".join(argv[2:]) or None
+        ok = overlay.set_state(state, text)
+        print(f"overlay → {state}" if ok else "overlay not reachable (is `am` available and the app installed?)")
     elif cmd in ("bot", "run"):
         asyncio.run(cmd_bot(agent))
     else:

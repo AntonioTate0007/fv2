@@ -39,7 +39,15 @@ fi
 # ── 1. Packages ───────────────────────────────────────────────────────────────
 log "Installing packages (python, git, termux-api)…"
 pkg update -y -q >/dev/null 2>&1 || true
-pkg install -y -q python git termux-api >/dev/null
+pkg install -y -q python git termux-api termux-am >/dev/null
+
+# Let the floating-ring app (phone/overlay) start Jarvis via Termux's RUN_COMMAND
+# intent. Harmless if you never install the overlay.
+mkdir -p "$HOME/.termux"
+if ! grep -qE '^\s*allow-external-apps\s*=\s*true' "$HOME/.termux/termux.properties" 2>/dev/null; then
+    echo "allow-external-apps = true" >> "$HOME/.termux/termux.properties"
+    termux-reload-settings 2>/dev/null || true
+fi
 
 # Termux needs explicit permission to reach the phone's storage for photos etc.
 if [ ! -d "$HOME/storage" ]; then
@@ -122,6 +130,11 @@ $(printf '\033[1;32m✓ Jarvis Phone is installed.\033[0m')
 
   Try it in the terminal first, no Telegram needed:
        python -m jarvis_phone chat
+
+  Floating Jarvis ring over every app: install the Jarvis Overlay APK
+  (built by the "overlay-apk" GitHub Action, or `cd phone/overlay && ./gradlew
+  assembleDebug` in Android Studio), grant its two permissions, tap Start.
+  The ring pulses while Jarvis talks and goes translucent when idle; tap it to talk.
 
   Tap-to-talk from the home screen: long-press the launcher → Widgets →
   Termux:Widget → drop the "Jarvis" shortcut. Tapping it opens the speech
