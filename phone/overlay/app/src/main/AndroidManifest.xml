@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Lets the ring start a Termux script (tap → talk). Termux must have
+    <!-- Lets the ring start a Termux script (tap = talk). Termux must have
          allow-external-apps=true in ~/.termux/termux.properties. -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
@@ -37,9 +37,8 @@
                 android:value="Floating assistant HUD driven by a local Termux process" />
         </service>
 
-        <!-- Termux drives the ring with:
-             am broadcast -n com.fortress.jarvis.overlay/.StateReceiver \
-                -a com.fortress.jarvis.overlay.STATE --es state speaking --es text "Hello" -->
+        <!-- Termux drives the ring by broadcasting STATE to this receiver with string
+             extras "state" (idle/listening/thinking/speaking) and "text". See StateReceiver. -->
         <receiver
             android:name=".StateReceiver"
             android:exported="true">
