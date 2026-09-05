@@ -1,0 +1,52 @@
+name: overlay-apk
+
+# Builds the Jarvis Overlay debug APK (phone/overlay). Download it from the run's
+# artifacts and install it on the phone. Runs only when the overlay changes, or on demand.
+on:
+  push:
+    paths:
+      - "phone/overlay/**"
+      - ".github/workflows/overlay-apk.yml"
+  pull_request:
+    paths:
+      - "phone/overlay/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to publish the rolling "jarvis-apk" pre-release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build debug APK
+        working-directory: phone/overlay
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+      - name: Name the APK
+        run: cp phone/overlay/app/build/outputs/apk/debug/app-debug.apk jarvis-overlay-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-overlay-debug-apk
+          path: jarvis-overlay-debug.apk
+          if-no-files-found: error
+      # A rolling pre-release so the newest APK always has a stable download URL:
+      #   https://github.com/AntonioTate0007/fv2/releases/download/jarvis-apk/jarvis-overlay-debug.apk
+      - name: Publish rolling pre-release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: jarvis-apk
+          name: Jarvis APK (latest build)
+          prerelease: true
+          make_latest: false
+          body: |
+            Debug build of the Jarvis setup wizard + floating ring from `${{ github.ref_name }}` @ `${{ github.sha }}`.
+            Install on the phone, open it, and follow the four steps.
+          files: jarvis-overlay-debug.apk

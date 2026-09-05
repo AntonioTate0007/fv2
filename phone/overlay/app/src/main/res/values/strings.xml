@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="channel_name">Jarvis floating HUD</string>
+    <string name="notif_title">Jarvis is standing by</string>
+    <string name="notif_text">Tap the ring to talk. Long-press it for settings.</string>
+    <string name="action_talk">Talk</string>
+    <string name="step1_title">1 · Install the Termux apps</string>
+    <string name="step1_hint">Downloads Termux, Termux:API, Termux:Widget and Termux:Boot from F-Droid and opens the installer for each. Android asks you to confirm every install.</string>
+    <string name="step2_title">2 · Bootstrap Jarvis inside Termux</string>
+    <string name="step2_hint">Copies the one-line installer to the clipboard and opens Termux. Long-press the terminal → Paste → Enter. It takes a few minutes and ends with a ✓. This is the one step no app can do for you: Termux only accepts commands from other apps after this script enables it.</string>
+    <string name="step3_title">3 · Settings</string>
+    <string name="step3_hint">Written straight into Termux (phone/.env). Only the Telegram token is needed for Telegram; everything else is optional.</string>
+    <string name="step4_title">4 · Floating ring</string>
+    <string name="btn_install">Install next Termux app</string>
+    <string name="btn_bootstrap">Copy command &amp; open Termux</string>
+    <string name="btn_save">Save settings to Termux</string>
+    <string name="btn_start_jarvis">Start Jarvis</string>
+    <string name="btn_doctor">Run doctor</string>
+    <string name="btn_overlay_perm">Allow drawing over other apps</string>
+    <string name="btn_termux_perm">Allow running Termux commands</string>
+    <string name="btn_ring_start">Start floating ring</string>
+    <string name="btn_ring_stop">Stop ring</string>
+    <string name="btn_test">Test: listen → think → speak</string>
+</resources>
