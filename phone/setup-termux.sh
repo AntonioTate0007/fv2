@@ -25,6 +25,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/AntonioTate0007/fv2.git}"
+BRANCH="${BRANCH:-main}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/fortress}"
 PHONE_DIR="$INSTALL_DIR/phone"
 
@@ -58,10 +59,12 @@ fi
 # ── 2. Repo + deps ────────────────────────────────────────────────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
     log "Updating $INSTALL_DIR…"
-    git -C "$INSTALL_DIR" pull --ff-only -q || warn "git pull failed — continuing with what's there"
+    git -C "$INSTALL_DIR" fetch -q --depth 1 origin "$BRANCH" && \
+        git -C "$INSTALL_DIR" checkout -q -B "$BRANCH" FETCH_HEAD || \
+        warn "git update failed — continuing with what's there"
 else
-    log "Cloning into $INSTALL_DIR…"
-    git clone -q --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    log "Cloning $BRANCH into $INSTALL_DIR…"
+    git clone -q --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 
 log "Installing Python requirements…"
@@ -115,7 +118,29 @@ cat > "$SHORTCUTS/Jarvis-Conversation" <<SC
 # Keeps listening after each answer until you say "bye".
 cd "$PHONE_DIR" && exec python -m jarvis_phone listen --conversation
 SC
-chmod +x "$SHORTCUTS"/Jarvis*
+cat > "$SHORTCUTS/Jarvis-Start" <<SC
+#!/data/data/com.termux/files/usr/bin/bash
+# Start (or restart) the bot daemon in the background.
+pkill -f "phone/run.sh" 2>/dev/null || true      # supervisor loop first…
+pkill -f "jarvis_phone bot" 2>/dev/null || true   # …then the bot it would restart
+termux-wake-lock 2>/dev/null || true
+cd "$PHONE_DIR" && nohup ./run.sh > "\$HOME/jarvis.log" 2>&1 &
+termux-toast "Jarvis started" 2>/dev/null || true
+SC
+cat > "$SHORTCUTS/Jarvis-Doctor" <<SC
+#!/data/data/com.termux/files/usr/bin/bash
+# Health check → notification (readable without opening a terminal).
+cd "$PHONE_DIR" && python -m jarvis_phone doctor 2>&1 | tee "\$HOME/jarvis-doctor.txt" | \
+    termux-notification --id jarvis-doctor --title "Jarvis doctor" --content "\$(head -c 800 "\$HOME/jarvis-doctor.txt")" 2>/dev/null || true
+SC
+chmod +x "$SHORTCUTS"/Jarvis* "$PHONE_DIR/configure.sh" 2>/dev/null || true
+
+# Tell the Jarvis Overlay app (if installed) that bootstrap finished, so its
+# setup wizard can move on. Harmless when the app isn't there.
+if command -v am >/dev/null 2>&1; then
+    am broadcast -n com.fortress.jarvis.overlay/.StateReceiver \
+        -a com.fortress.jarvis.overlay.SETUP_DONE >/dev/null 2>&1 || true
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 cat <<DONE

@@ -31,6 +31,29 @@ to **Gemini**. Each layer is optional.
 
 ## Install (on the phone)
 
+### The easy way: one APK
+
+Install the **Jarvis** APK (built by the `overlay-apk` GitHub Action; download it
+from the workflow run's artifacts, or build `phone/overlay` yourself). Its setup
+wizard does the rest:
+
+1. **Install the Termux apps.** It downloads Termux, Termux:API, Termux:Widget and
+   Termux:Boot from F-Droid and opens the installer for each. Android insists you
+   tap *Install* every time; the app cannot skip that.
+2. **Bootstrap Jarvis.** It copies the one-line installer to the clipboard and opens
+   Termux. Long-press → Paste → Enter. This is the one manual step: Termux only
+   accepts commands from other apps after this script enables it.
+3. **Settings.** Type your Telegram token, chat id and optional keys; the app
+   writes them into `phone/.env` inside Termux and can start the bot and run the
+   doctor from its buttons.
+4. **Floating ring.** Grant the two permissions and tap Start.
+
+Two caveats. The same four Termux packages must come from one source, which is
+why the wizard uses F-Droid only. And because the app is not from the Play Store,
+Android asks you to allow "install unknown apps" for it the first time.
+
+### The manual way
+
 Install **Termux**, **Termux:API** and **Termux:Widget** from F-Droid (the Play
 Store builds are abandoned and won't work). Optionally **Termux:Boot** for
 autostart. Then in Termux:
@@ -92,19 +115,11 @@ Jarvis drives it with Android broadcasts through Termux's `am` command; the
 the ring lights up for exactly as long as the phone is talking. With no app or no
 `am`, the calls are silent no-ops.
 
-Install:
-
-1. Get the APK: the **overlay-apk** GitHub Action builds it on every push that
-   touches `phone/overlay/` (download it from the workflow run's artifacts), or
-   open `phone/overlay` in Android Studio and run *assembleDebug*.
-2. Install it, open it, grant **draw over other apps** and **run Termux
-   commands**, tap **Start floating Jarvis**. The *Test* button cycles the states.
-3. `setup-termux.sh` already sets `allow-external-apps = true` in
-   `~/.termux/termux.properties`, which Termux requires before another app can
-   launch a script. Re-run the installer (or add the line) if you set up Termux
-   before this feature existed.
-4. From Termux, `python -m jarvis_phone overlay speaking "hello"` drives the
-   ring by hand. Battery-wise: the ring renders at a low frame rate when idle.
+The same APK is the setup wizard described under *Install* above. Once Termux is
+bootstrapped, grant **draw over other apps** and **run Termux commands** in step 4
+and tap **Start floating ring**. The *Test* button cycles the states. From Termux,
+`python -m jarvis_phone overlay speaking "hello"` drives the ring by hand. The
+ring renders at a low frame rate when idle to spare the battery.
 
 ## What it understands
 
@@ -217,7 +232,8 @@ jarvis_phone/
   fortress.py     client for server/main.py
   overlay.py      broadcasts idle/listening/thinking/speaking to the floating ring app
   __main__.py     bot | chat | doctor | once | listen | type | panel | overlay
-overlay/          the floating-ring Android app (standalone Gradle project)
+configure.sh      KEY=VALUE → .env (what the wizard's Save button calls)
+overlay/          the Android app: setup wizard + floating ring (standalone Gradle project)
 ```
 
 Adding a tool is one `reg.add(Tool(...))` in `tools.py` plus, optionally, a regex in

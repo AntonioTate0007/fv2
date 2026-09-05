@@ -32,6 +32,9 @@ android {
     }
 }
 
-// Deliberately dependency-free: plain Views + Canvas keep the APK tiny and the
-// build simple (no Compose, no AppCompat).
-dependencies {}
+// Plain Views + Canvas keep the APK tiny (no Compose, no AppCompat). androidx.core
+// is only here for FileProvider, which the setup wizard needs to hand downloaded
+// APKs to the system installer.
+dependencies {
+    implementation("androidx.core:core:1.15.0")
+}

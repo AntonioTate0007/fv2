@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -11,6 +13,9 @@
 
     <queries>
         <package android:name="com.termux" />
+        <package android:name="com.termux.api" />
+        <package android:name="com.termux.widget" />
+        <package android:name="com.termux.boot" />
     </queries>
 
     <application
@@ -45,7 +50,19 @@
             <intent-filter>
                 <action android:name="com.fortress.jarvis.overlay.STATE" />
                 <action android:name="com.fortress.jarvis.overlay.TALK" />
+                <action android:name="com.fortress.jarvis.overlay.SETUP_DONE" />
             </intent-filter>
         </receiver>
+
+        <!-- Serves downloaded Termux APKs to the system package installer. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

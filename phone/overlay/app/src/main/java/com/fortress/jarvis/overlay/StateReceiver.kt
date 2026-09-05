@@ -11,11 +11,18 @@ import android.content.Intent
  *      -a com.fortress.jarvis.overlay.STATE --es state speaking --es text "Battery is at 73%"
  *
  * state ∈ idle | listening | thinking | speaking | hidden | shown | stop
+ *
+ * SETUP_DONE is sent by setup-termux.sh when the bootstrap finishes, so the wizard
+ * can tick step 2 off.
  */
 class StateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             ACTION_TALK -> Termux.run(context)
+            ACTION_SETUP_DONE -> {
+                context.getSharedPreferences("setup", Context.MODE_PRIVATE)
+                    .edit().putBoolean("bootstrapped", true).apply()
+            }
             ACTION_STATE -> {
                 val state = intent.getStringExtra(EXTRA_STATE) ?: return
                 val text = intent.getStringExtra(EXTRA_TEXT)
@@ -38,6 +45,7 @@ class StateReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_STATE = "com.fortress.jarvis.overlay.STATE"
         const val ACTION_TALK = "com.fortress.jarvis.overlay.TALK"
+        const val ACTION_SETUP_DONE = "com.fortress.jarvis.overlay.SETUP_DONE"
         const val EXTRA_STATE = "state"
         const val EXTRA_TEXT = "text"
     }
