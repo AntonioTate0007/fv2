@@ -1,6 +1,47 @@
 package com.thumbshade.app.overlay
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalContext
+import com.thumbshade.app.data.ButtonAnim
+import com.thumbshade.app.data.ChargingAnim
+import com.thumbshade.app.data.ChargingMode
+import com.thumbshade.app.data.ColorSource
+import com.thumbshade.app.data.MediaLook
+import com.thumbshade.app.data.NotifAnim
+import com.thumbshade.app.data.NumberAlign
+import com.thumbshade.app.data.SnapStyle
+import com.thumbshade.app.data.Themes
+import com.thumbshade.app.ui.currentAccent
+import kotlin.math.PI
+import kotlin.math.abs
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -45,75 +86,291 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ButtonFace(pulse: Int, battery: Float?) {
+fun ButtonFace(
+    pulse: Int,
+    battery: Float?,
+    docked: Boolean,
+    dockedRight: Boolean,
+    shown: MutableTransitionState<Boolean>,
+) {
     val s by SettingsRepo.state.collectAsState()
     val all by NotificationRepo.items.collectAsState()
     val media by MediaHub.state.collectAsState()
+    val context = LocalContext.current
     val visible = remember(all, s) { ShadeFilter.visible(all, s) }
     val latest = visible.maxByOrNull { it.postTime }
+    val theme = Themes.resolve(s, isSystemInDarkTheme())
+    val accent = Color(currentAccent(context, s))
+    val dockedLook = docked && s.dockedLook
+    val half = docked && s.snapStyle == SnapStyle.HALF
 
+    // New-notification animation.
     val scale = remember { Animatable(1f) }
+    val hop = remember { Animatable(0f) }
+    val tilt = remember { Animatable(0f) }
+    val glow = remember { Animatable(0f) }
     LaunchedEffect(pulse) {
-        if (pulse > 0) {
-            scale.snapTo(1.25f)
-            scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessLow))
+        if (pulse == 0) return@LaunchedEffect
+        val k = (s.newNotifIntensity / 100f).coerceIn(0.1f, 1f)
+        when (s.newNotifAnim) {
+            NotifAnim.NONE -> Unit
+            NotifAnim.POP -> {
+                scale.snapTo(1f + 0.45f * k)
+                scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessLow))
+            }
+            NotifAnim.HOP -> {
+                hop.animateTo(-28f * k, tween(140))
+                hop.animateTo(0f, spring(dampingRatio = 0.3f, stiffness = Spring.StiffnessMediumLow))
+            }
+            NotifAnim.WIGGLE -> {
+                repeat(3) {
+                    tilt.animateTo(20f * k, tween(70))
+                    tilt.animateTo(-20f * k, tween(70))
+                }
+                tilt.animateTo(0f, tween(70))
+            }
+            NotifAnim.GLOW -> {
+                glow.snapTo(k)
+                glow.animateTo(0f, tween(1100))
+            }
         }
     }
 
-    val shape = RoundedCornerShape(percent = s.buttonCornerPercent.coerceIn(0, 50))
-    val ringColor = Color(com.thumbshade.app.ui.currentAccent(androidx.compose.ui.platform.LocalContext.current, s))
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(2.dp)
-            .graphicsLayer {
-                scaleX = scale.value
-                scaleY = scale.value
-                alpha = s.buttonAlpha
+    val enter: EnterTransition = when (s.appearAnim) {
+        ButtonAnim.NONE -> EnterTransition.None
+        ButtonAnim.POP -> scaleIn(spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMediumLow)) + fadeIn()
+        ButtonAnim.FADE -> fadeIn(tween(350))
+        ButtonAnim.SLIDE -> slideInHorizontally { if (dockedRight) it else -it } + fadeIn()
+        ButtonAnim.ZOOM -> scaleIn(initialScale = 0.2f) + fadeIn()
+        ButtonAnim.SPIN -> scaleIn(initialScale = 0.3f) + fadeIn()
+    }
+    val exit: ExitTransition = when (s.appearAnim) {
+        ButtonAnim.NONE -> ExitTransition.None
+        ButtonAnim.POP -> scaleOut(tween(200)) + fadeOut(tween(200))
+        ButtonAnim.FADE -> fadeOut(tween(300))
+        ButtonAnim.SLIDE -> slideOutHorizontally { if (dockedRight) it else -it } + fadeOut()
+        ButtonAnim.ZOOM -> scaleOut(targetScale = 0.2f) + fadeOut()
+        ButtonAnim.SPIN -> scaleOut(targetScale = 0.3f) + fadeOut()
+    }
+
+    AnimatedVisibility(visibleState = shown, enter = enter, exit = exit, modifier = Modifier.fillMaxSize()) {
+        val spin by transition.animateFloat(label = "spin") { st -> if (st == EnterExitState.Visible || s.appearAnim != ButtonAnim.SPIN) 0f else -270f }
+        val shape: Shape = when {
+            dockedLook -> RoundedCornerShape(percent = s.dockedCornerPercent.coerceIn(0, 50))
+            s.perCorner -> RoundedCornerShape(
+                topStart = s.cornerTopLeftDp.dp, topEnd = s.cornerTopRightDp.dp,
+                bottomStart = s.cornerBottomLeftDp.dp, bottomEnd = s.cornerBottomRightDp.dp,
+            )
+            else -> RoundedCornerShape(percent = s.buttonCornerPercent.coerceIn(0, 50))
+        }
+        val notifColor = latest?.color?.takeIf { it != 0 }?.let { Color(it).copy(alpha = 1f) }
+        val bg = when (s.buttonBgSource) {
+            ColorSource.THEME -> Color(theme.card)
+            ColorSource.CUSTOM -> Color(if (dockedLook) s.dockedColor else s.buttonColor)
+            ColorSource.NOTIFICATION -> notifColor ?: Color(s.buttonColor)
+            ColorSource.NONE -> Color.Transparent
+        }
+        val border: Color? = when (s.buttonBorderSource) {
+            ColorSource.THEME -> accent
+            ColorSource.CUSTOM -> Color(s.buttonBorderColor)
+            ColorSource.NOTIFICATION -> notifColor ?: Color(s.buttonBorderColor)
+            ColorSource.NONE -> null
+        }
+        val charging = s.chargingMode != ChargingMode.NONE && battery != null
+        val ringWidth = s.chargingThicknessDp.dp
+        val infinite = rememberInfiniteTransition(label = "charging")
+        val sweep by infinite.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "sweep")
+        val breathe by infinite.animateFloat(0.35f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "breathe")
+
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(2.dp)
+                .graphicsLayer {
+                    scaleX = scale.value
+                    scaleY = scale.value
+                    translationY = hop.value * density
+                    rotationZ = tilt.value + spin
+                    alpha = if (dockedLook) s.dockedAlpha else s.buttonAlpha
+                }
+                .drawBehind {
+                    if (glow.value > 0f) {
+                        drawCircle(accent.copy(alpha = 0.55f * glow.value), radius = size.minDimension / 2 + 10.dp.toPx() * glow.value)
+                    }
+                    if (charging && battery != null) {
+                        val stroke = ringWidth.toPx()
+                        val ringAlpha = if (s.chargingAnim == ChargingAnim.BREATHE) breathe else 1f
+                        val start = if (s.chargingAnim == ChargingAnim.SWEEP) sweep - 90f else -90f
+                        val sweepAngle = if (s.chargingMode == ChargingMode.PROGRESS) 360f * battery else 360f
+                        drawArc(
+                            color = accent.copy(alpha = ringAlpha),
+                            startAngle = start,
+                            sweepAngle = sweepAngle,
+                            useCenter = false,
+                            style = Stroke(width = stroke),
+                        )
+                    }
+                },
+        ) {
+            val w = maxWidth
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(if (charging) ringWidth + 2.dp else 0.dp)
+                    .clip(shape)
+                    .background(bg)
+                    .then(if (border != null && s.buttonBorderDp > 0) Modifier.border(s.buttonBorderDp.dp, border, shape) else Modifier),
+            ) {
+                // When half tucked behind the edge, keep the content in the visible half.
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = if (half && !dockedRight) w / 2 else 0.dp,
+                            end = if (half && dockedRight) w / 2 else 0.dp,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val m = media
+                    val showMedia = s.mediaLook != MediaLook.NOTHING && m != null && (m.playing || !s.mediaOnlyPlaying)
+                    when {
+                        showMedia && m != null -> MediaFace(m, s.mediaLook, Color(s.mediaAnimColor), s.mediaDimPercent)
+                        s.showLatestIcon && latest != null -> AppIcon(latest.pkg, Modifier.fillMaxSize().padding(10.dp))
+                    }
+                    val showNumber = s.showCount && visible.isNotEmpty() && !(s.numberHideSingle && visible.size == 1)
+                    if (showNumber) {
+                        val covered = showMedia || (s.showLatestIcon && latest != null)
+                        val align = when (s.numberAlign) {
+                            NumberAlign.CENTER -> if (covered) Alignment.BottomEnd else Alignment.Center
+                            NumberAlign.TOP_START -> Alignment.TopStart
+                            NumberAlign.TOP_END -> Alignment.TopEnd
+                            NumberAlign.BOTTOM_START -> Alignment.BottomStart
+                            NumberAlign.BOTTOM_END -> Alignment.BottomEnd
+                        }
+                        Text(
+                            text = if (visible.size > 99) "99+" else visible.size.toString(),
+                            color = Color(s.numberColor),
+                            fontSize = s.numberSizeSp.sp,
+                            fontWeight = if (s.numberBold) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier
+                                .align(align)
+                                .then(
+                                    if (covered || align != Alignment.Center) {
+                                        Modifier
+                                            .padding(2.dp)
+                                            .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                            .padding(horizontal = 5.dp)
+                                    } else Modifier
+                                ),
+                        )
+                    }
+                }
             }
-            .drawBehind {
-                if (s.chargingRing && battery != null) {
-                    val stroke = 3.dp.toPx()
-                    drawArc(
-                        color = ringColor,
-                        startAngle = -90f,
-                        sweepAngle = 360f * battery,
-                        useCenter = false,
-                        style = Stroke(width = stroke),
+        }
+    }
+}
+
+/** What the button shows while media plays. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MediaFace(m: MediaHub.Media, look: MediaLook, tint: Color, dimPercent: Int) {
+    val infinite = rememberInfiniteTransition(label = "media")
+    val spin by infinite.animateFloat(0f, 360f, infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "spin")
+    val phase by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "phase")
+    val rotation = if (m.playing) spin else 0f
+    val t = if (m.playing) phase else 0.25f
+    val art = m.art?.let { bmp -> remember(bmp) { bmp.asImageBitmap() } }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        when (look) {
+            MediaLook.NOTHING -> Unit
+            MediaLook.ALBUM_ART -> if (art != null) {
+                Image(art, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            }
+            MediaLook.RECORD, MediaLook.CD -> Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(3.dp)
+                    .graphicsLayer { rotationZ = rotation }
+                    .clip(CircleShape)
+                    .background(
+                        if (look == MediaLook.RECORD) {
+                            Brush.radialGradient(listOf(Color(0xFF2A2A2A), Color(0xFF0B0B0B)))
+                        } else {
+                            Brush.sweepGradient(listOf(Color(0xFFD7DCE0), Color(0xFF9AA4AC), Color(0xFFF2F4F5), Color(0xFFB8C0C6), Color(0xFFD7DCE0)))
+                        }
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (art != null) {
+                    Image(
+                        art, null, contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize(if (look == MediaLook.RECORD) 0.5f else 0.85f)
+                            .clip(CircleShape),
+                    )
+                }
+                Canvas(Modifier.fillMaxSize()) {
+                    if (look == MediaLook.RECORD) {
+                        for (i in 1..4) drawCircle(Color.White.copy(alpha = 0.06f), radius = size.minDimension / 2 * (0.55f + i * 0.1f), style = Stroke(1f))
+                    }
+                    drawCircle(Color(0xFF111111), radius = size.minDimension * 0.06f)
+                }
+            }
+            MediaLook.TAPE -> Canvas(Modifier.fillMaxSize().padding(6.dp)) {
+                val cy = size.height / 2
+                drawRoundRect(tint.copy(alpha = 0.25f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()))
+                for (cx in listOf(size.width * 0.3f, size.width * 0.7f)) {
+                    val r = size.minDimension * 0.18f
+                    drawCircle(tint, radius = r, center = Offset(cx, cy), style = Stroke(2.dp.toPx()))
+                    for (k in 0 until 3) {
+                        val a = Math.toRadians((rotation + k * 120).toDouble())
+                        drawLine(tint, Offset(cx, cy), Offset(cx + (r * cos(a)).toFloat(), cy + (r * sin(a)).toFloat()), strokeWidth = 2.dp.toPx())
+                    }
+                }
+            }
+            MediaLook.EQUALIZER -> Canvas(Modifier.fillMaxSize().padding(10.dp)) {
+                val bars = 4
+                val bw = size.width / (bars * 2 - 1)
+                for (i in 0 until bars) {
+                    val level = 0.25f + 0.75f * abs(sin((t * 2 * PI + i * 1.3).toFloat()))
+                    val bh = size.height * level
+                    drawRoundRect(
+                        tint, topLeft = Offset(i * 2 * bw, size.height - bh), size = Size(bw, bh),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(bw / 3),
                     )
                 }
             }
-            .padding(if (s.chargingRing && battery != null) 4.dp else 0.dp)
-            .clip(shape)
-            .background(Color(s.buttonColor))
-            .border(s.buttonBorderDp.dp, Color(s.buttonBorderColor), shape),
-        contentAlignment = Alignment.Center,
-    ) {
-        val m = media
-        val art = m?.art
-        when {
-            s.showAlbumArt && m != null && m.playing && art != null -> Image(
-                bitmap = remember(art) { art.asImageBitmap() },
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+            MediaLook.PULSE -> Canvas(Modifier.fillMaxSize()) {
+                val r = size.minDimension / 2
+                drawCircle(tint.copy(alpha = 0.3f * (1f - t)), radius = r * (0.4f + 0.6f * t))
+                drawCircle(tint, radius = r * 0.3f)
+            }
+            MediaLook.WAVE -> Canvas(Modifier.fillMaxSize().padding(6.dp)) {
+                val path = Path()
+                val steps = 40
+                for (i in 0..steps) {
+                    val x = size.width * i / steps
+                    val y = size.height / 2 + size.height * 0.3f * sin((i / steps.toFloat() * 2 * PI + t * 2 * PI).toFloat())
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                drawPath(path, tint, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
+            }
+            MediaLook.NOTES -> {
+                Text("♪", color = tint, fontSize = 20.sp, modifier = Modifier.graphicsLayer { translationY = -20f * t * density; alpha = 1f - t; translationX = -6f * density })
+                Text("♫", color = tint, fontSize = 16.sp, modifier = Modifier.graphicsLayer { val u = (t + 0.5f) % 1f; translationY = -20f * u * density; alpha = 1f - u; translationX = 8f * density })
+            }
+            MediaLook.TICKER -> Text(
+                m.title.ifBlank { m.artist },
+                color = tint,
+                fontSize = 13.sp,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE).padding(horizontal = 4.dp),
             )
-            s.showLatestIcon && latest != null -> AppIcon(latest.pkg, Modifier.fillMaxSize().padding(10.dp))
         }
-        if (s.showCount && visible.isNotEmpty()) {
-            Text(
-                text = if (visible.size > 99) "99+" else visible.size.toString(),
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = if (s.showLatestIcon || (s.showAlbumArt && m?.playing == true)) {
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                        .padding(horizontal = 5.dp)
-                } else Modifier,
-            )
+        if (dimPercent > 0 && (look == MediaLook.ALBUM_ART)) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dimPercent / 100f)))
         }
     }
 }

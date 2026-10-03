@@ -14,7 +14,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -120,7 +122,9 @@ import com.thumbshade.app.ui.NotifIcon
 import com.thumbshade.app.ui.ThumbTheme
 import com.thumbshade.app.ui.relativeTime
 import kotlinx.coroutines.delay
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.sin
 
 private enum class Panel { NONE, REPLY, SNOOZE, ACTIONS, MENU }
 
@@ -131,6 +135,11 @@ private fun enterFor(anim: ShadeAnim): EnterTransition = when (anim) {
     ShadeAnim.EXPAND -> expandVertically(expandFrom = Alignment.Bottom) + fadeIn()
     ShadeAnim.BOUNCE -> slideInVertically(spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow)) { it }
     ShadeAnim.DROP -> slideInVertically { -it / 3 } + fadeIn()
+    ShadeAnim.NONE -> EnterTransition.None
+    ShadeAnim.ZOOM -> scaleIn(initialScale = 0.3f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn()
+    ShadeAnim.POP -> scaleIn(spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.6f) + fadeIn()
+    ShadeAnim.ELASTIC -> slideInVertically(spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessLow)) { it / 2 } + fadeIn()
+    ShadeAnim.GLIDE -> slideInHorizontally { it } + fadeIn()
 }
 
 private fun exitFor(anim: ShadeAnim): ExitTransition = when (anim) {
@@ -139,6 +148,11 @@ private fun exitFor(anim: ShadeAnim): ExitTransition = when (anim) {
     ShadeAnim.SCALE -> scaleOut(targetScale = 0.8f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut()
     ShadeAnim.EXPAND -> shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
     ShadeAnim.DROP -> slideOutVertically { it / 3 } + fadeOut()
+    ShadeAnim.NONE -> ExitTransition.None
+    ShadeAnim.ZOOM -> scaleOut(targetScale = 0.3f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut()
+    ShadeAnim.POP -> scaleOut(targetScale = 0.7f) + fadeOut()
+    ShadeAnim.ELASTIC -> slideOutVertically { it / 2 } + fadeOut()
+    ShadeAnim.GLIDE -> slideOutHorizontally { -it } + fadeOut()
 }
 
 @Composable
@@ -172,7 +186,13 @@ fun ShadeScreen(
                 visibleState = visibleState,
                 enter = enterFor(s.shadeAnim),
                 exit = exitFor(s.shadeAnim),
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier = Modifier.align(
+                    when (s.shadeAlign) {
+                        com.thumbshade.app.data.ShadeAlign.LEFT -> Alignment.BottomStart
+                        com.thumbshade.app.data.ShadeAlign.CENTER -> Alignment.BottomCenter
+                        com.thumbshade.app.data.ShadeAlign.RIGHT -> Alignment.BottomEnd
+                    }
+                ),
             ) {
                 ShadePanel(s, entries, media, held.size, onClose, onOpenSettings)
             }
@@ -245,11 +265,11 @@ private fun ShadePanel(
 
         LazyColumn(
             state = listState,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(s.rowSpacingDp.dp),
             modifier = Modifier.weight(1f, fill = false),
         ) {
             items(entries, key = { it.id }) { entry ->
-                Box(Modifier.wheel(listState, entry.id, s.browseStyle == BrowseStyle.WHEEL)) {
+                Box(Modifier.browse(listState, entry.id, s.browseStyle)) {
                     when (entry) {
                         is ShadeFilter.Single -> NotificationCard(entry.item, s, onClose)
                         is ShadeFilter.Group -> GroupCard(entry, s, onClose)
@@ -260,20 +280,54 @@ private fun ShadePanel(
     }
 }
 
-/** "Ferris wheel": cards tilt and shrink as they move away from the middle of the list. */
-private fun Modifier.wheel(state: LazyListState, key: Any, enabled: Boolean): Modifier =
-    if (!enabled) this else graphicsLayer {
+/**
+ * Browsing styles: each card is transformed by how far it sits from the middle of the list
+ * (frac -1 at the top edge .. 1 at the bottom edge).
+ */
+private fun Modifier.browse(state: LazyListState, key: Any, style: BrowseStyle): Modifier =
+    if (style == BrowseStyle.LIST) this else graphicsLayer {
         val info = state.layoutInfo
         val item = info.visibleItemsInfo.firstOrNull { it.key == key } ?: return@graphicsLayer
         val viewport = (info.viewportEndOffset - info.viewportStartOffset).toFloat().coerceAtLeast(1f)
         val center = (info.viewportStartOffset + info.viewportEndOffset) / 2f
-        val frac = ((item.offset + item.size / 2f - center) / viewport).coerceIn(-1f, 1f)
-        rotationX = -frac * 60f
-        val scale = 1f - abs(frac) * 0.2f
-        scaleX = scale
-        scaleY = scale
-        alpha = 1f - abs(frac) * 0.45f
+        val f = ((item.offset + item.size / 2f - center) / viewport).coerceIn(-1f, 1f)
+        val a = abs(f)
         cameraDistance = 14f * density
+        when (style) {
+            BrowseStyle.LIST -> Unit
+            BrowseStyle.WHEEL -> {
+                rotationX = -f * 60f
+                scaleX = 1f - a * 0.2f; scaleY = scaleX
+                alpha = 1f - a * 0.45f
+            }
+            BrowseStyle.COVERFLOW -> {
+                rotationX = -f * 40f
+                scaleX = 1f - a * 0.12f; scaleY = scaleX
+            }
+            BrowseStyle.SPOTLIGHT -> {
+                alpha = 1f - a * 0.75f
+                scaleX = 1f - a * 0.08f; scaleY = scaleX
+            }
+            BrowseStyle.FAN -> {
+                transformOrigin = TransformOrigin(0.5f, 1.6f)
+                rotationZ = f * 14f
+            }
+            BrowseStyle.WAVE -> translationX = sin(f * PI.toFloat()) * 36f * density
+            BrowseStyle.CASCADE -> translationX = f * 48f * density
+            BrowseStyle.SWAY -> {
+                transformOrigin = TransformOrigin(0.5f, 0f)
+                rotationZ = sin(f * PI.toFloat()) * 7f
+            }
+            BrowseStyle.TUMBLE -> {
+                rotationZ = f * 25f
+                alpha = 1f - a * 0.5f
+                scaleX = 1f - a * 0.15f; scaleY = scaleX
+            }
+            BrowseStyle.HELIX -> {
+                rotationY = f * 55f
+                translationX = sin(f * PI.toFloat()) * 20f * density
+            }
+        }
     }
 
 private fun cardColor(s: AppSettings, fallback: Color): Color =

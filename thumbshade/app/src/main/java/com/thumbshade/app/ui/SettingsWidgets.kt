@@ -26,6 +26,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -97,22 +98,36 @@ fun SliderRow(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
+    step: Float? = null,
     format: (Float) -> String = { it.roundToInt().toString() },
     onChange: (Float) -> Unit,
 ) {
     var local by remember(value) { mutableStateOf(value) }
+    val span = range.endInclusive - range.start
+    // The − / + buttons move by one unit for whole-number ranges, 1% otherwise.
+    val unit = step ?: if (span > 2f) 1f else span / 100f
+    fun nudge(direction: Int) {
+        val next = (local + direction * unit).coerceIn(range.start, range.endInclusive)
+        local = next
+        onChange(next)
+    }
     Column(Modifier.fillMaxWidth()) {
         Row {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             Text(format(local), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
-        Slider(
-            value = local.coerceIn(range.start, range.endInclusive),
-            onValueChange = { local = it },
-            onValueChangeFinished = { onChange(local) },
-            valueRange = range,
-            steps = steps,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledTonalIconButton(onClick = { nudge(-1) }, modifier = Modifier.size(36.dp)) { Text("−") }
+            Slider(
+                value = local.coerceIn(range.start, range.endInclusive),
+                onValueChange = { local = it },
+                onValueChangeFinished = { onChange(local) },
+                valueRange = range,
+                steps = steps,
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+            )
+            FilledTonalIconButton(onClick = { nudge(1) }, modifier = Modifier.size(36.dp)) { Text("+") }
+        }
     }
 }
 

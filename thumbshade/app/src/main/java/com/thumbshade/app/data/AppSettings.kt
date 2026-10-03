@@ -48,13 +48,79 @@ data class GestureMode(
 )
 
 @Serializable
-enum class KeyboardBehavior(val label: String) { NOTHING("Stay put"), MOVE_ABOVE("Move above the keyboard"), HIDE("Hide while typing") }
+enum class KeyboardBehavior(val label: String) {
+    NOTHING("Work as usual"),
+    MOVE_ABOVE("Move above the keyboard"),
+    HIDE("Hide while the keyboard is open"),
+    DOCK("Dock to the side while typing"),
+    CLICK_THROUGH("Click through (taps go to the keyboard)"),
+}
+
+/** What the button does in the apps you pick. */
+@Serializable
+enum class AppBehavior(val label: String) {
+    NOTHING("Work as usual"),
+    HIDE("Hide while the app is open"),
+    DOCK("Dock to the side"),
+    CLICK_THROUGH("Click through (taps go to the app)"),
+}
 
 @Serializable
-enum class ShadeAnim(val label: String) { SLIDE("Slide"), FADE("Fade"), SCALE("Zoom"), EXPAND("Unfold"), BOUNCE("Bounce"), DROP("Drop in") }
+enum class EmptyBehavior(val label: String) { STAY("Stay visible"), HIDE("Hide the button"), DOCK("Dock to the side") }
 
 @Serializable
-enum class BrowseStyle(val label: String) { LIST("List"), WHEEL("Ferris wheel") }
+enum class LandscapeBehavior(val label: String) { RELATIVE("Relative position"), KEEP("Keep in the same place"), HIDE("Do not show") }
+
+/** Docked = snapped against the left or right edge. */
+@Serializable
+enum class SnapStyle(val label: String) { HALF("Half tucked behind the edge"), FULL("Fully on screen, flush with the edge") }
+
+@Serializable
+enum class ButtonAnim(val label: String) { NONE("None"), POP("Pop"), FADE("Fade"), SLIDE("Slide from the edge"), ZOOM("Zoom"), SPIN("Spin") }
+
+@Serializable
+enum class NotifAnim(val label: String) { NONE("None"), POP("Pop"), HOP("Hop"), WIGGLE("Wiggle"), GLOW("Glow flash") }
+
+@Serializable
+enum class ColorSource(val label: String) { THEME("Theme colour"), CUSTOM("Custom colour"), NOTIFICATION("Latest notification colour"), NONE("None") }
+
+@Serializable
+enum class NumberAlign(val label: String) { CENTER("Centre"), TOP_START("Top left"), TOP_END("Top right"), BOTTOM_START("Bottom left"), BOTTOM_END("Bottom right") }
+
+@Serializable
+enum class MediaLook(val label: String) {
+    NOTHING("Nothing"), ALBUM_ART("Album art"), RECORD("Record"), CD("CD"), TAPE("Tape"),
+    EQUALIZER("Equalizer"), PULSE("Pulse"), WAVE("Wave"), NOTES("Music notes"), TICKER("Scrolling title"),
+}
+
+@Serializable
+enum class ChargingMode(val label: String) { NONE("None"), RING("Ring"), PROGRESS("Progress ring (battery level)") }
+
+@Serializable
+enum class ChargingAnim(val label: String) { NONE("None"), SWEEP("Sweep"), BREATHE("Breathe") }
+
+@Serializable
+enum class ShadeAlign(val label: String) { LEFT("Left"), CENTER("Centre"), RIGHT("Right") }
+
+@Serializable
+enum class ShadeAnim(val label: String) {
+    SLIDE("Slide"), FADE("Fade"), SCALE("Scale"), EXPAND("Unfold"), BOUNCE("Bounce"), DROP("Drop in"),
+    NONE("None (instant)"), ZOOM("Zoom"), POP("Pop"), ELASTIC("Elastic"), GLIDE("Glide"),
+}
+
+@Serializable
+enum class BrowseStyle(val label: String) {
+    LIST("List"),
+    WHEEL("Ferris wheel (cards curve away in depth)"),
+    COVERFLOW("Coverflow (cards tilt back in 3D)"),
+    SPOTLIGHT("Spotlight (centre card stands out)"),
+    FAN("Fan (cards splay like a hand of cards)"),
+    WAVE("Wave (cards weave side to side)"),
+    CASCADE("Cascade (cards step sideways)"),
+    SWAY("Sway (cards swing like hanging signs)"),
+    TUMBLE("Tumble (cards cartwheel away)"),
+    HELIX("Helix (cards turn on a corkscrew)"),
+}
 
 @Serializable
 enum class EdgeStyle(val label: String, val aroundButton: Boolean = false) {
@@ -114,32 +180,69 @@ data class AppSettings(
     val buttonWidthDp: Int = 56,
     val buttonHeightDp: Int = 56,
     val buttonCornerPercent: Int = 50,
+    val perCorner: Boolean = false,
+    val cornerTopLeftDp: Int = 28,
+    val cornerTopRightDp: Int = 28,
+    val cornerBottomLeftDp: Int = 28,
+    val cornerBottomRightDp: Int = 28,
+    val buttonBgSource: ColorSource = ColorSource.CUSTOM,
+    val buttonBorderSource: ColorSource = ColorSource.CUSTOM,
     val buttonColor: Long = 0xE6202124,
     val buttonBorderColor: Long = 0xFFE0E0E0,
     val buttonBorderDp: Int = 2,
     val buttonAlpha: Float = 1f,
     val showCount: Boolean = true,
+    val numberSizeSp: Int = 18,
+    val numberBold: Boolean = true,
+    val numberColor: Long = 0xFFFFFFFF,
+    val numberHideSingle: Boolean = false,
+    val numberAlign: NumberAlign = NumberAlign.CENTER,
     val showLatestIcon: Boolean = false,
-    val showAlbumArt: Boolean = true,
+    val mediaLook: MediaLook = MediaLook.ALBUM_ART,
+    val mediaOnlyPlaying: Boolean = true,
+    val mediaDimPercent: Int = 0,
+    val mediaAnimColor: Long = 0xFF4DD9C9,
+    val appearAnim: ButtonAnim = ButtonAnim.POP,
+    val newNotifAnim: NotifAnim = NotifAnim.POP,
+    val newNotifIntensity: Int = 60,
     val iconCluster: Boolean = true,
     val clusterSide: ClusterSide = ClusterSide.RING,
     val clusterMax: Int = 7,
     val clusterIconDp: Int = 30,
     val monochromeIcons: Boolean = false,
     val snapToEdge: Boolean = true,
-    val hideWhenEmpty: Boolean = false,
+    val snapStyle: SnapStyle = SnapStyle.HALF,
+    val snapZonePercent: Int = 25,
+    val flingVelocityDp: Int = 800,
+    val allowOffscreen: Boolean = false,
+    val dockedLook: Boolean = false,
+    val dockedWidthDp: Int = 44,
+    val dockedHeightDp: Int = 72,
+    val dockedCornerPercent: Int = 50,
+    val dockedColor: Long = 0xCC202124,
+    val dockedAlpha: Float = 0.85f,
+    val emptyBehavior: EmptyBehavior = EmptyBehavior.STAY,
     val keyboardBehavior: KeyboardBehavior = KeyboardBehavior.MOVE_ABOVE,
     val hideInApps: Set<String> = emptySet(),
+    val appBehavior: AppBehavior = AppBehavior.HIDE,
+    val landscapeBehavior: LandscapeBehavior = LandscapeBehavior.RELATIVE,
     val hideSeconds: Int = 10,
-    val chargingRing: Boolean = true,
-    val buttonX: Int = -1,
-    val buttonY: Int = -1,
+    val chargingMode: ChargingMode = ChargingMode.PROGRESS,
+    val chargingThicknessDp: Int = 3,
+    val chargingAnim: ChargingAnim = ChargingAnim.SWEEP,
+    /** Saved position as fractions of the portrait screen (-1 = default). */
+    val buttonXFrac: Float = -1f,
+    val buttonYFrac: Float = -1f,
+    val buttonDocked: Boolean = true,
+    val dockRight: Boolean = true,
     val modes: List<GestureMode> = listOf(GestureMode()),
     val activeMode: Int = 0,
 
     // Shade
     val shadeMaxHeight: Float = 0.85f,
     val shadeWidth: Float = 1f,
+    val shadeAlign: ShadeAlign = ShadeAlign.CENTER,
+    val rowSpacingDp: Int = 8,
     val newestAtBottom: Boolean = true,
     val dimBehind: Float = 0.55f,
     val browseStyle: BrowseStyle = BrowseStyle.LIST,

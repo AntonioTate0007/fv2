@@ -238,7 +238,7 @@ private fun importBackup(context: Context, uri: Uri) {
         val backup = AppJson.decodeFromString(Backup.serializer(), text)
         // Keep this phone's button position.
         val current = SettingsRepo.current
-        SettingsRepo.replace(backup.settings.copy(buttonX = current.buttonX, buttonY = current.buttonY))
+        SettingsRepo.replace(backup.settings.copy(buttonXFrac = current.buttonXFrac, buttonYFrac = current.buttonYFrac, buttonDocked = current.buttonDocked, dockRight = current.dockRight))
         RuleStore.update { backup.rules }
         Effects.toast(context, "Imported ${backup.rules.size} rule(s)")
     }.onFailure { Effects.toast(context, "That file isn't a ThumbShade backup") }

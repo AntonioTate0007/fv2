@@ -20,6 +20,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -35,7 +36,10 @@ import com.thumbshade.app.R
 import com.thumbshade.app.access.AssistService
 import com.thumbshade.app.data.AppSettings
 import com.thumbshade.app.data.ClusterSide
+import com.thumbshade.app.data.AppBehavior
+import com.thumbshade.app.data.EmptyBehavior
 import com.thumbshade.app.data.KeyboardBehavior
+import com.thumbshade.app.data.LandscapeBehavior
 import com.thumbshade.app.data.SettingsRepo
 import com.thumbshade.app.notif.NotificationRepo
 import com.thumbshade.app.notif.ShadeItem
@@ -166,59 +170,133 @@ class OverlayService : Service() {
 
     // region Button
 
+    /** Docked against an edge right now (saved dock or a temporary dock from a behaviour). */
+    var docked by mutableStateOf(false)
+        private set
+    var dockedOnRight by mutableStateOf(true)
+        private set
+    /** Drives the button's appear / hide animation. */
+    val buttonShown = MutableTransitionState(false)
+    private var lastSize: Pair<Int, Int>? = null
+    private var hiding = false
+
+    private fun landscape(): Boolean =
+        resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        main.post { reapply() }
+    }
+
+    private fun reapply() = applyState(SettingsRepo.current, NotificationRepo.items.value.size, AssistService.state.value)
+
     private fun applyState(s: AppSettings, count: Int, assist: AssistService.State) {
         val now = System.currentTimeMillis()
-        val hiddenByApp = assist.foregroundPkg != null && assist.foregroundPkg in s.hideInApps
-        val hiddenByKeyboard = assist.keyboardVisible && s.keyboardBehavior == KeyboardBehavior.HIDE
-        val hiddenByEmpty = s.hideWhenEmpty && count == 0
-        val visible = s.showButton && !hiddenByApp && !hiddenByKeyboard && !hiddenByEmpty && now >= buttonHiddenUntil &&
-            Settings.canDrawOverlays(this)
+        val inChosenApp = assist.foregroundPkg != null && assist.foregroundPkg in s.hideInApps
+        val keyboard = assist.keyboardVisible
+        val empty = count == 0
 
-        if (!visible) {
-            removeButton()
+        val hide = !s.showButton || now < buttonHiddenUntil || !Settings.canDrawOverlays(this) ||
+            (inChosenApp && s.appBehavior == AppBehavior.HIDE) ||
+            (keyboard && s.keyboardBehavior == KeyboardBehavior.HIDE) ||
+            (empty && s.emptyBehavior == EmptyBehavior.HIDE) ||
+            (landscape() && s.landscapeBehavior == LandscapeBehavior.HIDE)
+        if (hide) {
+            hideButtonAnimated()
             return
         }
-        val sizeChanged = lastApplied?.let {
-            it.buttonWidthDp != s.buttonWidthDp || it.buttonHeightDp != s.buttonHeightDp ||
-                it.iconCluster != s.iconCluster || it.clusterSide != s.clusterSide || it.clusterIconDp != s.clusterIconDp
-        } ?: true
-        if (sizeChanged) removeButton()
-        lastApplied = s
-        if (buttonView == null) addButton(s)
+        val forceDock = (inChosenApp && s.appBehavior == AppBehavior.DOCK) ||
+            (keyboard && s.keyboardBehavior == KeyboardBehavior.DOCK) ||
+            (empty && s.emptyBehavior == EmptyBehavior.DOCK)
+        val clickThrough = (inChosenApp && s.appBehavior == AppBehavior.CLICK_THROUGH) ||
+            (keyboard && s.keyboardBehavior == KeyboardBehavior.CLICK_THROUGH)
 
-        // Keyboard: lift the button above it without saving that position.
-        val params = buttonParams ?: return
+        if (!dragging) {
+            docked = s.buttonDocked || forceDock
+        }
         val bounds = OverlayWindows.screenBounds(this)
-        val savedY = if (s.buttonY >= 0) s.buttonY else (bounds.height() * 0.7f).toInt()
-        val savedX = if (s.buttonX >= 0) s.buttonX else bounds.width() - params.width - OverlayWindows.dp(this, 8)
-        var y = savedY
-        val kbTop = assist.keyboardTop
-        if (assist.keyboardVisible && s.keyboardBehavior == KeyboardBehavior.MOVE_ABOVE && kbTop != null) {
-            y = min(y, kbTop - params.height - OverlayWindows.dp(this, 12))
-        }
-        if (!dragging && (params.x != savedX || params.y != y)) {
-            params.x = savedX
+        val useDockedLook = docked && s.dockedLook
+        val w = OverlayWindows.dp(this, if (useDockedLook) s.dockedWidthDp else s.buttonWidthDp)
+        val h = OverlayWindows.dp(this, if (useDockedLook) s.dockedHeightDp else s.buttonHeightDp)
+
+        // The cluster window depends on settings, so rebuild everything when those change.
+        val rebuild = lastApplied?.let {
+            it.iconCluster != s.iconCluster || it.clusterSide != s.clusterSide || it.clusterIconDp != s.clusterIconDp ||
+                it.clusterMax != s.clusterMax
+        } ?: false
+        if (rebuild) removeButton()
+        lastApplied = s
+        if (buttonView == null) addButton(s, w, h)
+        val params = buttonParams ?: return
+        hiding = false
+        buttonShown.targetState = true
+
+        if (!dragging) {
+            val portraitW = min(bounds.width(), bounds.height())
+            val portraitH = max(bounds.width(), bounds.height())
+            val land = landscape()
+            var y = if (s.buttonYFrac >= 0) {
+                Placement.fromFrac(s.buttonYFrac, h, bounds.height(), portraitH, land, s.landscapeBehavior)
+            } else (bounds.height() * 0.62f).toInt()
+            val x: Int
+            if (docked) {
+                // A temporary dock goes to whichever side the button is nearest.
+                val right = if (s.buttonDocked) s.dockRight else
+                    (s.buttonXFrac < 0f || s.buttonXFrac >= 0.5f)
+                dockedOnRight = right
+                x = Placement.dockX(bounds.width(), w, right, s.snapStyle)
+            } else {
+                x = if (s.buttonXFrac >= 0) {
+                    Placement.fromFrac(s.buttonXFrac, w, bounds.width(), portraitW, land, s.landscapeBehavior)
+                } else bounds.width() - w - OverlayWindows.dp(this, 8)
+            }
+            // Keyboard: lift the button above it without saving that position.
+            val kbTop = assist.keyboardTop
+            if (keyboard && s.keyboardBehavior == KeyboardBehavior.MOVE_ABOVE && kbTop != null) {
+                y = min(y, kbTop - h - OverlayWindows.dp(this, 12))
+            }
+            y = y.coerceIn(0, max(0, bounds.height() - h))
+
+            var changed = params.x != x || params.y != y || params.width != w || params.height != h
+            params.x = x
             params.y = y
-            updateButtonLayout()
+            params.width = w
+            params.height = h
+            // Click-through: untouchable windows must be at most 80% opaque for touches to pass.
+            val flags = if (clickThrough) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            val alpha = if (clickThrough) 0.8f else 1f
+            if (flags != params.flags || alpha != params.alpha) {
+                params.flags = flags
+                params.alpha = alpha
+                changed = true
+            }
+            if (changed) updateButtonLayout()
         }
+        if (lastSize != Pair(w, h) && clusterView != null) {
+            // Cluster window is sized from the button; rebuild it for the new size.
+            clusterView?.let { v -> runCatching { wm.removeView(v) } }
+            clusterView = null
+            clusterParams = null
+            if (s.iconCluster) addCluster(s)
+        }
+        lastSize = Pair(w, h)
     }
 
     private var dragging = false
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun addButton(s: AppSettings) {
-        val w = OverlayWindows.dp(this, s.buttonWidthDp)
-        val h = OverlayWindows.dp(this, s.buttonHeightDp)
-        val params = OverlayWindows.params(w, h, touchable = true)
+    private fun addButton(s: AppSettings, w: Int, h: Int) {
+        val params = OverlayWindows.params(w, h, touchable = true, noLimits = true)
         val bounds = OverlayWindows.screenBounds(this)
-        params.x = if (s.buttonX >= 0) s.buttonX else bounds.width() - w - OverlayWindows.dp(this, 8)
-        params.y = if (s.buttonY >= 0) s.buttonY else (bounds.height() * 0.7f).toInt()
+        params.x = bounds.width() - w
+        params.y = (bounds.height() * 0.62f).toInt()
 
         val frame = GestureFrame(this)
         // Compose finds its lifecycle on the window's root view, so the root needs the owner too.
         owner.attach(frame)
         val face = OverlayWindows.composeView(this, owner) {
-            ButtonFace(pulse = pulse, battery = battery)
+            ButtonFace(pulse = pulse, battery = battery, docked = docked, dockedRight = dockedOnRight, shown = buttonShown)
         }
         frame.addView(face, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         frame.listener = object : GestureFrame.Listener {
@@ -241,42 +319,64 @@ class OverlayService : Service() {
 
             override fun onDragStart() {
                 dragging = true
+                val st = SettingsRepo.current
+                // Undocking: switch to the free-floating size and pull the button fully on screen.
+                if (docked) {
+                    docked = false
+                    val nw = OverlayWindows.dp(this@OverlayService, st.buttonWidthDp)
+                    val nh = OverlayWindows.dp(this@OverlayService, st.buttonHeightDp)
+                    val b = OverlayWindows.screenBounds(this@OverlayService)
+                    params.width = nw
+                    params.height = nh
+                    params.x = if (dockedOnRight) b.width() - nw else 0
+                }
                 startX = params.x
                 startY = params.y
+                updateButtonLayout()
                 frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
 
             override fun onDrag(dx: Float, dy: Float) {
                 val b = OverlayWindows.screenBounds(this@OverlayService)
-                params.x = (startX + dx).toInt().coerceIn(0, max(0, b.width() - params.width))
-                params.y = (startY + dy).toInt().coerceIn(0, max(0, b.height() - params.height))
+                val st = SettingsRepo.current
+                val p = Placement.clamp((startX + dx).toInt(), (startY + dy).toInt(), params.width, params.height, b.width(), b.height(), st.allowOffscreen)
+                params.x = p.x
+                params.y = p.y
                 updateButtonLayout()
             }
 
-            override fun onDragEnd() {
+            override fun onDragEnd(velocityX: Float) {
                 val b = OverlayWindows.screenBounds(this@OverlayService)
-                if (SettingsRepo.current.snapToEdge) {
-                    val center = params.x + params.width / 2
-                    params.x = if (center < b.width() / 2) 0 else b.width() - params.width
-                    updateButtonLayout()
-                }
+                val st = SettingsRepo.current
+                val flingPx = st.flingVelocityDp * resources.displayMetrics.density
+                val dock = Placement.releaseDock(params.x, params.width, b.width(), velocityX, flingPx, st.snapToEdge, st.snapZonePercent / 100f)
+                val portrait = !landscape()
+                val yFrac = Placement.toFrac(params.y, params.height, b.height())
+                val xFrac = Placement.toFrac(params.x.coerceAtLeast(0), params.width, b.width())
                 dragging = false
-                val x = params.x
-                val y = params.y
-                SettingsRepo.update { it.copy(buttonX = x, buttonY = y) }
+                SettingsRepo.update {
+                    it.copy(
+                        buttonDocked = dock != null,
+                        dockRight = dock ?: it.dockRight,
+                        buttonYFrac = if (portrait || it.landscapeBehavior == LandscapeBehavior.RELATIVE) yFrac else it.buttonYFrac,
+                        buttonXFrac = if (dock == null) xFrac else if (dock) 1f else 0f,
+                    )
+                }
+                reapply()
             }
         }
         runCatching { wm.addView(frame, params) }.onFailure { return }
         buttonView = frame
         buttonParams = params
+        lastSize = Pair(w, h)
         if (s.iconCluster) addCluster(s)
     }
 
     private fun clusterSizePx(s: AppSettings): Pair<Int, Int> {
         val icon = OverlayWindows.dp(this, s.clusterIconDp)
         val gap = OverlayWindows.dp(this, 6)
-        val bw = OverlayWindows.dp(this, s.buttonWidthDp)
-        val bh = OverlayWindows.dp(this, s.buttonHeightDp)
+        val bw = buttonParams?.width ?: OverlayWindows.dp(this, s.buttonWidthDp)
+        val bh = buttonParams?.height ?: OverlayWindows.dp(this, s.buttonHeightDp)
         return when (s.clusterSide) {
             ClusterSide.RING -> Pair(bw + 2 * (icon + gap), bh + 2 * (icon + gap))
             ClusterSide.ABOVE -> Pair(max(bw, (icon + gap) * s.clusterMax), icon + gap)
@@ -324,6 +424,17 @@ class OverlayService : Service() {
         positionCluster()
     }
 
+    /** Plays the hide animation, then removes the windows. */
+    private fun hideButtonAnimated() {
+        if (buttonView == null || hiding) return
+        hiding = true
+        buttonShown.targetState = false
+        clusterView?.let { v -> runCatching { wm.removeView(v) } }
+        clusterView = null
+        clusterParams = null
+        main.postDelayed({ if (hiding && !buttonShown.targetState) removeButton() }, 400)
+    }
+
     private fun removeButton() {
         buttonView?.let { v -> runCatching { wm.removeView(v) } }
         clusterView?.let { v -> runCatching { wm.removeView(v) } }
@@ -331,6 +442,20 @@ class OverlayService : Service() {
         clusterView = null
         buttonParams = null
         clusterParams = null
+        hiding = false
+        buttonShown.targetState = false
+    }
+
+    /** Plays the new-notification animation, for the "Try it" button in settings. */
+    fun testPulse() {
+        pulse++
+    }
+
+    /** Plays the hide and then the appear animation, for the "Try it" button in settings. */
+    fun replayAppear() {
+        if (buttonView == null) return
+        buttonShown.targetState = false
+        main.postDelayed({ if (buttonView != null) buttonShown.targetState = true }, 550)
     }
 
     /** Centre of the button on screen, for effects drawn around it. */
@@ -343,8 +468,8 @@ class OverlayService : Service() {
 
     fun hideButtonFor(seconds: Int) {
         buttonHiddenUntil = System.currentTimeMillis() + seconds * 1000L
-        removeButton()
-        main.postDelayed({ SettingsRepo.current.let { s -> applyState(s, NotificationRepo.items.value.size, AssistService.state.value) } }, seconds * 1000L + 50)
+        hideButtonAnimated()
+        main.postDelayed({ reapply() }, seconds * 1000L + 50)
     }
 
     // endregion
@@ -457,7 +582,8 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         fun onSwipe(direction: Direction)
         fun onDragStart()
         fun onDrag(dx: Float, dy: Float)
-        fun onDragEnd()
+        /** [velocityX] in px/s, positive = towards the right. */
+        fun onDragEnd(velocityX: Float)
     }
 
     var listener: Listener? = null
@@ -467,6 +593,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
     private var downY = 0f
     private var moved = false
     private var dragging = false
+    private var velocity: VelocityTracker? = null
     private val startDrag = Runnable {
         if (!moved) {
             dragging = true
@@ -480,6 +607,9 @@ class GestureFrame(context: Context) : FrameLayout(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                velocity?.recycle()
+                velocity = VelocityTracker.obtain()
+                trackRaw(event)
                 downX = event.rawX
                 downY = event.rawY
                 moved = false
@@ -487,6 +617,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 postDelayed(startDrag, longPress)
             }
             MotionEvent.ACTION_MOVE -> {
+                trackRaw(event)
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 if (dragging) {
@@ -501,7 +632,12 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 when {
-                    dragging -> listener?.onDragEnd()
+                    dragging -> {
+                        trackRaw(event)
+                        val v = velocity
+                        v?.computeCurrentVelocity(1000)
+                        listener?.onDragEnd(v?.xVelocity ?: 0f)
+                    }
                     moved -> listener?.onSwipe(
                         if (abs(dx) > abs(dy)) {
                             if (dx > 0) Direction.RIGHT else Direction.LEFT
@@ -518,11 +654,19 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(startDrag)
-                if (dragging) listener?.onDragEnd()
+                if (dragging) listener?.onDragEnd(0f)
                 dragging = false
             }
         }
         return true
+    }
+
+    /** The window moves while dragging, so track velocity in screen coordinates. */
+    private fun trackRaw(event: MotionEvent) {
+        val copy = MotionEvent.obtain(event)
+        copy.setLocation(event.rawX, event.rawY)
+        velocity?.addMovement(copy)
+        copy.recycle()
     }
 
     override fun performClick(): Boolean {
