@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,6 +81,24 @@ fun GeneralScreen() {
     val postNotif = Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     val exact = Build.VERSION.SDK_INT < 31 || context.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true
     val contacts = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+
+    var crash by remember { mutableStateOf(com.thumbshade.app.CrashLog.read(context)) }
+    crash?.let { report ->
+        Section("ThumbShade crashed last time") {
+            Hint("Copy this and send it to whoever is fixing the app.")
+            Text(report.take(1500), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = {
+                    com.thumbshade.app.notif.NotifOps.copy(context, "ThumbShade crash", report)
+                    Effects.toast(context, "Copied")
+                }, modifier = Modifier.weight(1f)) { Text("Copy") }
+                OutlinedButton(onClick = {
+                    com.thumbshade.app.CrashLog.clear(context)
+                    crash = null
+                }, modifier = Modifier.weight(1f)) { Text("Dismiss") }
+            }
+        }
+    }
 
     Section("Permissions") {
         PermissionRow("Notification access", listener, required = true, "Lets ThumbShade show your notifications. Nothing leaves your phone.") {

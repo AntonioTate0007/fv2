@@ -31,6 +31,7 @@ class App : Application() {
     @OptIn(FlowPreview::class)
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
         SettingsRepo.init(this)
         RuleStore.init(this)
         HoldStore.init(this)

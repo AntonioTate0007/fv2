@@ -199,6 +199,8 @@ class OverlayService : Service() {
         params.y = if (s.buttonY >= 0) s.buttonY else (bounds.height() * 0.7f).toInt()
 
         val frame = GestureFrame(this)
+        // Compose finds its lifecycle on the window's root view, so the root needs the owner too.
+        owner.attach(frame)
         val face = OverlayWindows.composeView(this, owner) {
             ButtonFace(pulse = pulse, battery = battery)
         }
@@ -360,6 +362,7 @@ class OverlayService : Service() {
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
         val frame = KeyFrame(this) { closeShade() }
+        owner.attach(frame)
         val content = OverlayWindows.composeView(this, owner) {
             ShadeScreen(
                 visibleState = shadeState,
