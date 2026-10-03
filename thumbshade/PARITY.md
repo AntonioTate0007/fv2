@@ -42,10 +42,10 @@ items exist in ThumbShade; the rest are planned.
 
 ## Notification card styling
 - [x] Card corner radius, card colour, body lines, large icon, pictures, buttons
-- [ ] Per-part text size / colour / bold (app name, title, body, time, subtitle)
-- [ ] Header icon options (app / sender), multiline header and title
-- [ ] Gradient backgrounds, borders, button styling
-- [ ] Media player: next track, tint
+- [x] Per-part text size / colour / bold (app name, title, body, time, subtitle)
+- [x] Header icon options (app / sender), multiline header and title
+- [x] Gradient backgrounds, borders, button styling
+- [x] Media player: next track, tint
 
 ## Other
 - [x] Themes (built-in + your own), Auto, Material You, tab bar position, notification controls

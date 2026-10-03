@@ -27,6 +27,7 @@ object MediaHub {
         val playing: Boolean,
         val actions: Long,
         val customActions: List<PlaybackState.CustomAction>,
+        val nextTitle: String = "",
     ) {
         /** Position extrapolated to now. */
         fun livePosition(): Long {
@@ -104,6 +105,11 @@ object MediaHub {
             playing = ps?.state == PlaybackState.STATE_PLAYING,
             actions = ps?.actions ?: 0,
             customActions = ps?.customActions.orEmpty(),
+            nextTitle = runCatching {
+                val queue = c.queue.orEmpty()
+                val i = queue.indexOfFirst { it.queueId == ps?.activeQueueItemId }
+                queue.getOrNull(i + 1)?.takeIf { i >= 0 }?.description?.title?.toString()
+            }.getOrNull().orEmpty(),
         )
     }
 

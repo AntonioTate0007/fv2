@@ -46,6 +46,10 @@ import com.thumbshade.app.data.GestureMode
 import com.thumbshade.app.data.GestureType
 import com.thumbshade.app.data.AppBehavior
 import com.thumbshade.app.data.ButtonAnim
+import com.thumbshade.app.data.CardBg
+import com.thumbshade.app.data.CardStyle
+import com.thumbshade.app.data.HeaderIcon
+import com.thumbshade.app.data.TextAlignChoice
 import com.thumbshade.app.data.ChargingAnim
 import com.thumbshade.app.data.ChargingMode
 import com.thumbshade.app.data.ColorSource
@@ -426,20 +430,7 @@ fun ShadeSettingsScreen() {
         SwitchRow("Close when it's empty", s.closeWhenEmpty) { v -> edit { it.copy(closeWhenEmpty = v) } }
     }
 
-    Section("Notification style") {
-        SliderRow("Corner radius", s.cardCornerDp.toFloat(), 0f..36f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(cardCornerDp = v.roundToInt()) } }
-        SwitchRow("Theme card colour", s.cardColor == 0L) { v -> edit { it.copy(cardColor = if (v) 0L else 0xF0202124) } }
-        if (s.cardColor != 0L) ColorRow("Card colour", s.cardColor, allowAlpha = true) { c -> edit { it.copy(cardColor = c) } }
-        SliderRow("Body lines", s.bodyMaxLines.toFloat(), 1f..20f) { v -> edit { it.copy(bodyMaxLines = v.roundToInt()) } }
-        SwitchRow("Show large icon", s.showLargeIcon) { v -> edit { it.copy(showLargeIcon = v) } }
-        SwitchRow("Show pictures", s.showPictures) { v -> edit { it.copy(showPictures = v) } }
-        SwitchRow("Show buttons (actions, snooze)", s.showActions) { v -> edit { it.copy(showActions = v) } }
-    }
-
-    Section("Media player") {
-        SwitchRow("Built-in media player", s.showMedia, "Play/pause, skip, seek and the player's own buttons") { v -> edit { it.copy(showMedia = v) } }
-        SwitchRow("Album art as background", s.albumArtBackground) { v -> edit { it.copy(albumArtBackground = v) } }
-    }
+    NotificationCardSections(s)
 
     Section("Screen lighting") {
         SwitchRow("Light up for new notifications", s.edgeLight) { v -> edit { it.copy(edgeLight = v) } }
@@ -453,5 +444,123 @@ fun ShadeSettingsScreen() {
         SwitchRow("Wake the screen", s.edgeWakeScreen) { v -> edit { it.copy(edgeWakeScreen = v) } }
         SwitchRow("Only while the screen is on", s.edgeOnlyScreenOn) { v -> edit { it.copy(edgeOnlyScreenOn = v) } }
         Button(onClick = { EdgeLight.preview(context) }, modifier = Modifier.fillMaxWidth()) { Text("Try it") }
+    }
+}
+
+private fun editCard(transform: (CardStyle) -> CardStyle) = edit { it.copy(card = transform(it.card)) }
+
+private fun sp(v: Float) = "${v.roundToInt()} sp"
+private fun dpLabel(v: Float) = "${v.roundToInt()} dp"
+
+/** Text settings shared by app name, subtitle, title, body and time. */
+@Composable
+private fun TextStyleRows(label: String, sizeSp: Int, bold: Boolean, color: Long, range: ClosedFloatingPointRange<Float>, onSize: (Int) -> Unit, onBold: (Boolean) -> Unit, onColor: (Long) -> Unit) {
+    SliderRow("$label text size", sizeSp.toFloat(), range, format = ::sp) { onSize(it.roundToInt()) }
+    SwitchRow("Bold $label".lowercase().replaceFirstChar { it.uppercase() }, bold) { onBold(it) }
+    AutoColorRow("$label colour", color, onColor)
+}
+
+@Composable
+private fun NotificationCardSections(s: AppSettings) {
+    val c = s.card
+
+    Section("Card background and border") {
+        ChoiceRow("Background", CardBg.entries, c.bgSource, { it.label }) { v -> editCard { it.copy(bgSource = v) } }
+        if (c.bgSource == CardBg.CUSTOM || c.bgSource == CardBg.GRADIENT) {
+            ColorRow(if (c.bgSource == CardBg.GRADIENT) "Gradient start" else "Background colour", c.bgColor, allowAlpha = true) { v -> editCard { it.copy(bgColor = v) } }
+        }
+        if (c.bgSource == CardBg.GRADIENT) {
+            ColorRow("Gradient end", c.gradientEnd, allowAlpha = true) { v -> editCard { it.copy(gradientEnd = v) } }
+        }
+        SliderRow("Corner radius", s.cardCornerDp.toFloat(), 0f..40f, format = ::dpLabel) { v -> edit { it.copy(cardCornerDp = v.roundToInt()) } }
+        SliderRow("Inner padding", c.paddingDp.toFloat(), 4f..28f, format = ::dpLabel) { v -> editCard { it.copy(paddingDp = v.roundToInt()) } }
+        SliderRow("Border width", c.borderWidthDp.toFloat(), 0f..6f, format = ::dpLabel) { v -> editCard { it.copy(borderWidthDp = v.roundToInt()) } }
+        if (c.borderWidthDp > 0) {
+            SwitchRow("Border in the notification's colour", c.borderFromNotification) { v -> editCard { it.copy(borderFromNotification = v) } }
+            if (!c.borderFromNotification) ColorRow("Border colour", c.borderColor, allowAlpha = true) { v -> editCard { it.copy(borderColor = v) } }
+        }
+        AutoColorRow("Fallback colour when the app sets none", c.fallbackColor) { v -> editCard { it.copy(fallbackColor = v) } }
+    }
+
+    Section("Header") {
+        ChoiceRow("Header icon", HeaderIcon.entries, c.headerIcon, { it.label }) { v -> editCard { it.copy(headerIcon = v) } }
+        if (c.headerIcon != HeaderIcon.NONE) {
+            SliderRow("Header icon size", c.headerIconDp.toFloat(), 12f..40f, format = ::dpLabel) { v -> editCard { it.copy(headerIconDp = v.roundToInt()) } }
+        }
+        if (c.headerIcon == HeaderIcon.SENDER) {
+            SwitchRow("Show app icon badge", c.appBadge, "A small app icon on the sender's picture") { v -> editCard { it.copy(appBadge = v) } }
+        }
+        SwitchRow("Show app name", c.showAppName) { v -> editCard { it.copy(showAppName = v) } }
+        if (c.showAppName) {
+            TextStyleRows("App name", c.appNameSp, c.appNameBold, c.appNameColor, 8f..22f,
+                { v -> editCard { it.copy(appNameSp = v) } }, { v -> editCard { it.copy(appNameBold = v) } }, { v -> editCard { it.copy(appNameColor = v) } })
+        }
+        SwitchRow("Show subtitle", c.showSubtitle, "The conversation or account name some apps add") { v -> editCard { it.copy(showSubtitle = v) } }
+        if (c.showSubtitle) {
+            SwitchRow("Subtitle in the header", c.subtitleInHeader, "Off: show it under the title") { v -> editCard { it.copy(subtitleInHeader = v) } }
+            ChoiceRow("Header lines", listOf(1, 2, 3), c.headerLines, { if (it == 1) "1 line" else "$it lines" }) { v -> editCard { it.copy(headerLines = v) } }
+            TextStyleRows("Subtitle", c.subtitleSp, c.subtitleBold, c.subtitleColor, 8f..22f,
+                { v -> editCard { it.copy(subtitleSp = v) } }, { v -> editCard { it.copy(subtitleBold = v) } }, { v -> editCard { it.copy(subtitleColor = v) } })
+        }
+    }
+
+    Section("Title") {
+        SwitchRow("Show title", c.showTitle) { v -> editCard { it.copy(showTitle = v) } }
+        if (c.showTitle) {
+            TextStyleRows("Title", c.titleSp, c.titleBold, c.titleColor, 10f..28f,
+                { v -> editCard { it.copy(titleSp = v) } }, { v -> editCard { it.copy(titleBold = v) } }, { v -> editCard { it.copy(titleColor = v) } })
+            SliderRow("Title lines", c.titleLines.toFloat(), 1f..6f, format = { "${it.roundToInt()}" }) { v -> editCard { it.copy(titleLines = v.roundToInt()) } }
+            ChoiceRow("Title alignment", TextAlignChoice.entries, c.titleAlign, { it.label }) { v -> editCard { it.copy(titleAlign = v) } }
+        }
+    }
+
+    Section("Body") {
+        SwitchRow("Show body", c.showBody) { v -> editCard { it.copy(showBody = v) } }
+        if (c.showBody) {
+            TextStyleRows("Body", c.bodySp, c.bodyBold, c.bodyColor, 10f..26f,
+                { v -> editCard { it.copy(bodySp = v) } }, { v -> editCard { it.copy(bodyBold = v) } }, { v -> editCard { it.copy(bodyColor = v) } })
+            SwitchRow("Limit body lines", c.limitBodyLines) { v -> editCard { it.copy(limitBodyLines = v) } }
+            if (c.limitBodyLines) SliderRow("Line limit", s.bodyMaxLines.toFloat(), 1f..20f) { v -> edit { it.copy(bodyMaxLines = v.roundToInt()) } }
+            ChoiceRow("Body alignment", TextAlignChoice.entries, c.bodyAlign, { it.label }) { v -> editCard { it.copy(bodyAlign = v) } }
+            SwitchRow("Hide title from body", c.hideTitleFromBody, "Don't repeat the sender's name on every chat line") { v -> editCard { it.copy(hideTitleFromBody = v) } }
+        }
+        SwitchRow("Show pictures", s.showPictures) { v -> edit { it.copy(showPictures = v) } }
+    }
+
+    Section("Time") {
+        SwitchRow("Show time", c.showTime) { v -> editCard { it.copy(showTime = v) } }
+        if (c.showTime) {
+            SwitchRow("Clock time instead of \"5 min ago\"", c.clockTime) { v -> editCard { it.copy(clockTime = v) } }
+            TextStyleRows("Time", c.timeSp, c.timeBold, c.timeColor, 8f..20f,
+                { v -> editCard { it.copy(timeSp = v) } }, { v -> editCard { it.copy(timeBold = v) } }, { v -> editCard { it.copy(timeColor = v) } })
+        }
+    }
+
+    Section("Large icon") {
+        SwitchRow("Show large icon", s.showLargeIcon) { v -> edit { it.copy(showLargeIcon = v) } }
+        if (s.showLargeIcon) {
+            SliderRow("Icon size", c.largeIconDp.toFloat(), 24f..96f, format = ::dpLabel) { v -> editCard { it.copy(largeIconDp = v.roundToInt()) } }
+            SwitchRow("Round icon", c.roundLargeIcon) { v -> editCard { it.copy(roundLargeIcon = v) } }
+            SwitchRow("Show the sender's picture for chats", c.senderPicture) { v -> editCard { it.copy(senderPicture = v) } }
+            SwitchRow("Hide it if it's already in the header", c.hideSenderIfInHeader) { v -> editCard { it.copy(hideSenderIfInHeader = v) } }
+        }
+    }
+
+    Section("Buttons and progress bar") {
+        SwitchRow("Show buttons (actions, snooze)", s.showActions) { v -> edit { it.copy(showActions = v) } }
+        if (s.showActions) {
+            TextStyleRows("Button", c.buttonSp, c.buttonBold, c.buttonColor, 10f..22f,
+                { v -> editCard { it.copy(buttonSp = v) } }, { v -> editCard { it.copy(buttonBold = v) } }, { v -> editCard { it.copy(buttonColor = v) } })
+            SwitchRow("Button background", c.buttonBackground) { v -> editCard { it.copy(buttonBackground = v) } }
+            if (c.buttonBackground) ColorRow("Button background colour", c.buttonBgColor, allowAlpha = true) { v -> editCard { it.copy(buttonBgColor = v) } }
+            SwitchRow("Button border", c.buttonBorder) { v -> editCard { it.copy(buttonBorder = v) } }
+            if (c.buttonBorder) {
+                SliderRow("Border size", c.buttonBorderDp.toFloat(), 1f..4f, format = ::dpLabel) { v -> editCard { it.copy(buttonBorderDp = v.roundToInt()) } }
+                ColorRow("Button border colour", c.buttonBorderColor, allowAlpha = true) { v -> editCard { it.copy(buttonBorderColor = v) } }
+            }
+            SliderRow("Button corner radius", c.buttonCornerDp.toFloat(), 0f..24f, format = ::dpLabel) { v -> editCard { it.copy(buttonCornerDp = v.roundToInt()) } }
+            SliderRow("Button padding", c.buttonPaddingDp.toFloat(), 2f..16f, format = ::dpLabel) { v -> editCard { it.copy(buttonPaddingDp = v.roundToInt()) } }
+        }
+        AutoColorRow("Progress bar colour", c.progressColor) { v -> editCard { it.copy(progressColor = v) } }
     }
 }

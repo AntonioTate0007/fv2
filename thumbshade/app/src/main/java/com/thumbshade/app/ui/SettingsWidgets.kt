@@ -235,6 +235,15 @@ fun ColorRow(title: String, color: Long, allowAlpha: Boolean = false, onChange: 
     }
 }
 
+/** A colour that can be left automatic (0) or set by hand. */
+@Composable
+fun AutoColorRow(title: String, color: Long, onChange: (Long) -> Unit) {
+    Column {
+        SwitchRow(title, color == 0L, if (color == 0L) "Automatic" else "Custom") { auto -> onChange(if (auto) 0L else 0xFFFFFFFF) }
+        if (color != 0L) ColorRow("$title (custom)", color, allowAlpha = true, onChange = onChange)
+    }
+}
+
 @Composable
 fun ButtonRow(title: String, subtitle: String? = null, onClick: () -> Unit) {
     OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {

@@ -242,6 +242,7 @@ data class AppSettings(
     val shadeMaxHeight: Float = 0.85f,
     val shadeWidth: Float = 1f,
     val shadeAlign: ShadeAlign = ShadeAlign.CENTER,
+    val card: CardStyle = CardStyle(),
     val rowSpacingDp: Int = 8,
     val newestAtBottom: Boolean = true,
     val dimBehind: Float = 0.55f,

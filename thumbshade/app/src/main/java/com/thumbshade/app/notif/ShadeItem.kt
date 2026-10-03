@@ -60,6 +60,8 @@ data class ShadeItem(
     val people: List<Person>,
     val channelId: String,
     val silent: Boolean,
+    /** Picture of the person (or group) the notification is from, for chats. */
+    val senderIcon: Icon?,
     val sbn: StatusBarNotification,
 ) {
     val displayText: String get() = bigText.ifBlank { text }
@@ -106,11 +108,14 @@ data class ShadeItem(
                 }
             }
 
+            var lastSenderIcon: Icon? = null
             val messages = (extras.getParcelableArray(Notification.EXTRA_MESSAGES) ?: emptyArray()).mapNotNull { p ->
                 val b = p as? Bundle ?: return@mapNotNull null
                 val msgText = b.getCharSequence("text")?.toString() ?: return@mapNotNull null
+                val person = b.getParcelable("sender_person") as? Person
+                person?.icon?.let { lastSenderIcon = it }
                 val sender = b.getCharSequence("sender")?.toString()
-                    ?: (b.getParcelable("sender_person") as? Person)?.name?.toString()
+                    ?: person?.name?.toString()
                     ?: ""
                 Msg(sender, msgText)
             }
@@ -164,6 +169,9 @@ data class ShadeItem(
                 people = people,
                 channelId = channelId,
                 silent = importance <= 2,
+                senderIcon = (if (Build.VERSION.SDK_INT >= 30) extras.get(Notification.EXTRA_CONVERSATION_ICON) as? Icon else null)
+                    ?: lastSenderIcon
+                    ?: if (isMessaging) n.getLargeIcon() else null,
                 sbn = sbn,
             )
         }

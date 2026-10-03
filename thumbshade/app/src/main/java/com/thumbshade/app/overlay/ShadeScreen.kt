@@ -21,6 +21,17 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import com.thumbshade.app.data.CardBg
+import com.thumbshade.app.data.CardStyle
+import com.thumbshade.app.data.HeaderIcon
+import com.thumbshade.app.data.TextAlignChoice
+import com.thumbshade.app.ui.clockTime
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -330,12 +341,46 @@ private fun Modifier.browse(state: LazyListState, key: Any, style: BrowseStyle):
         }
     }
 
-private fun cardColor(s: AppSettings, fallback: Color): Color =
-    if (s.cardColor != 0L) Color(s.cardColor) else fallback
+private fun pick(color: Long, auto: Color): Color = if (color != 0L) Color(color) else auto
 
-private fun accentFor(item: ShadeItem, s: AppSettings, fallback: Color): Color {
-    s.perAppColor[item.pkg]?.let { return Color(it) }
-    return if (item.color != 0) Color(item.color).copy(alpha = 1f) else fallback
+private fun TextAlignChoice.toAlign(): TextAlign = when (this) {
+    TextAlignChoice.START -> TextAlign.Start
+    TextAlignChoice.CENTER -> TextAlign.Center
+    TextAlignChoice.END -> TextAlign.End
+}
+
+private fun accentFor(item: ShadeItem?, s: AppSettings, fallback: Color): Color {
+    item?.let { s.perAppColor[it.pkg] }?.let { return Color(it) }
+    if (item != null && item.color != 0) return Color(item.color).copy(alpha = 1f)
+    return pick(s.card.fallbackColor, fallback)
+}
+
+/** The card's background, from the card style. */
+@Composable
+private fun cardBrush(s: AppSettings, accent: Color): Brush {
+    val c = s.card
+    val theme = MaterialTheme.colorScheme.surfaceContainer
+    return when (c.bgSource) {
+        CardBg.THEME -> SolidColor(theme)
+        CardBg.CUSTOM -> SolidColor(Color(c.bgColor))
+        CardBg.NOTIFICATION -> SolidColor(accent.copy(alpha = 0.22f).compositeOver(theme))
+        CardBg.GRADIENT -> Brush.linearGradient(listOf(Color(c.bgColor), Color(c.gradientEnd)))
+    }
+}
+
+/** Shape, background, border and click handling shared by every card. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, onLongClick: (() -> Unit)? = null): Modifier {
+    val shape = RoundedCornerShape(s.cardCornerDp.dp)
+    val c = s.card
+    val borderColor = if (c.borderFromNotification) accent else Color(c.borderColor)
+    return this
+        .fillMaxWidth()
+        .clip(shape)
+        .background(cardBrush(s, accent), shape)
+        .then(if (c.borderWidthDp > 0) Modifier.border(c.borderWidthDp.dp, borderColor, shape) else Modifier)
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -356,120 +401,241 @@ private fun NotificationCard(item: ShadeItem, s: AppSettings, onClose: () -> Uni
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun HeaderIconView(item: ShadeItem, c: CardStyle, accent: Color) {
+    val size = c.headerIconDp.dp
+    when (c.headerIcon) {
+        HeaderIcon.NONE -> return
+        HeaderIcon.SMALL -> if (item.smallIcon != null) {
+            NotifIcon(item.smallIcon, item.key + ":s:" + item.postTime, Modifier.size(size), tint = accent)
+        } else AppIcon(item.pkg, Modifier.size(size))
+        HeaderIcon.APP -> AppIcon(item.pkg, Modifier.size(size))
+        HeaderIcon.SENDER -> {
+            val picture = item.senderIcon ?: item.largeIcon
+            Box(Modifier.size(size)) {
+                if (picture != null) {
+                    NotifIcon(picture, item.key + ":p:" + item.postTime, Modifier.fillMaxSize().clip(CircleShape))
+                } else {
+                    AppIcon(item.pkg, Modifier.fillMaxSize())
+                }
+                if (c.appBadge && picture != null) {
+                    AppIcon(
+                        item.pkg,
+                        Modifier
+                            .size(size * 0.45f)
+                            .align(Alignment.BottomEnd)
+                            .clip(CircleShape),
+                    )
+                }
+            }
+        }
+    }
+    Spacer(Modifier.width(8.dp))
+}
+
+@Composable
+private fun CardButton(label: String, c: CardStyle, accent: Color, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(c.buttonCornerDp.dp)
+    Box(
+        Modifier
+            .padding(end = 6.dp, top = 4.dp)
+            .clip(shape)
+            .then(if (c.buttonBackground) Modifier.background(Color(c.buttonBgColor), shape) else Modifier)
+            .then(if (c.buttonBorder) Modifier.border(c.buttonBorderDp.dp, Color(c.buttonBorderColor), shape) else Modifier)
+            .clickable(onClick = onClick)
+            .padding(horizontal = (c.buttonPaddingDp + 4).dp, vertical = c.buttonPaddingDp.dp),
+    ) {
+        Text(
+            label,
+            color = pick(c.buttonColor, accent),
+            fontSize = c.buttonSp.sp,
+            fontWeight = if (c.buttonBold) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
     val context = LocalContext.current
+    val c = s.card
     var panel by remember(item.key) { mutableStateOf(Panel.NONE) }
     var replyTo by remember(item.key) { mutableStateOf<NAction?>(null) }
     val accent = accentFor(item, s, MaterialTheme.colorScheme.primary)
-    val lines = s.perAppLines[item.pkg] ?: s.bodyMaxLines
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val bodyLines = s.perAppLines[item.pkg] ?: if (c.limitBodyLines) s.bodyMaxLines else Int.MAX_VALUE
 
-    Surface(
-        shape = RoundedCornerShape(s.cardCornerDp.dp),
-        color = cardColor(s, MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
+    Column(
+        Modifier
+            .card(
+                s, accent,
                 onClick = {
                     NotifOps.open(context, item)
                     if (s.closeAfterOpen) onClose()
                 },
                 onLongClick = { panel = if (panel == Panel.MENU) Panel.NONE else Panel.MENU },
-            ),
+            )
+            .padding(horizontal = (c.paddingDp + 2).dp, vertical = c.paddingDp.dp),
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (item.smallIcon != null) {
-                    NotifIcon(item.smallIcon, item.key + ":s:" + item.postTime, Modifier.size(18.dp), tint = accent)
-                } else {
-                    AppIcon(item.pkg, Modifier.size(18.dp))
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(item.appName, style = MaterialTheme.typography.labelMedium, color = accent, maxLines = 1)
-                if (item.subText.isNotBlank()) {
-                    Text(" · " + item.subText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                }
-                Spacer(Modifier.weight(1f))
-                if (item.showWhen) {
-                    Text(relativeTime(item.postTime), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    if (item.title.isNotBlank()) {
-                        Text(item.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (item.messages.isNotEmpty()) {
-                        item.messages.takeLast(lines.coerceAtLeast(1)).forEach { m ->
-                            Text(
-                                (if (m.sender.isNotBlank()) m.sender + ": " else "") + m.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    } else if (item.displayText.isNotBlank()) {
-                        Text(item.displayText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = lines, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                if (s.showLargeIcon && item.largeIcon != null) {
-                    Spacer(Modifier.width(10.dp))
-                    NotifIcon(item.largeIcon, item.key + ":l:" + item.postTime, Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)))
-                }
-            }
-            val pic = item.picture
-            if (s.showPictures && pic != null) {
-                Image(
-                    bitmap = remember(pic) { pic.asImageBitmap() },
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .fillMaxWidth()
-                        .heightIn(max = 220.dp)
-                        .clip(RoundedCornerShape(14.dp)),
+        // Header: icon, app name, subtitle, time.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            HeaderIconView(item, c, accent)
+            if (c.showAppName) {
+                Text(
+                    item.appName,
+                    color = pick(c.appNameColor, accent),
+                    fontSize = c.appNameSp.sp,
+                    fontWeight = if (c.appNameBold) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
                 )
             }
-            if (item.progressMax > 0 || item.progressIndeterminate) {
-                if (item.progressIndeterminate) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp), color = accent)
-                } else {
-                    LinearProgressIndicator(
-                        progress = { item.progress / item.progressMax.toFloat() },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        color = accent,
+            if (c.showSubtitle && c.subtitleInHeader && item.subText.isNotBlank()) {
+                Text(
+                    (if (c.showAppName) " · " else "") + item.subText,
+                    color = pick(c.subtitleColor, secondary),
+                    fontSize = c.subtitleSp.sp,
+                    fontWeight = if (c.subtitleBold) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = c.headerLines.coerceIn(1, 3),
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            if (c.showTime && item.showWhen) {
+                Text(
+                    if (c.clockTime) clockTime(item.postTime) else relativeTime(item.postTime),
+                    color = pick(c.timeColor, secondary),
+                    fontSize = c.timeSp.sp,
+                    fontWeight = if (c.timeBold) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+        }
+
+        val chat = item.messages.isNotEmpty()
+        val bigIcon = when {
+            !s.showLargeIcon -> null
+            chat && c.senderPicture && !(c.hideSenderIfInHeader && c.headerIcon == HeaderIcon.SENDER) -> item.senderIcon ?: item.largeIcon
+            chat && c.hideSenderIfInHeader && c.headerIcon == HeaderIcon.SENDER -> null
+            else -> item.largeIcon
+        }
+        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                if (c.showTitle && item.title.isNotBlank()) {
+                    Text(
+                        item.title,
+                        color = pick(c.titleColor, onSurface),
+                        fontSize = c.titleSp.sp,
+                        fontWeight = if (c.titleBold) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = c.titleLines.coerceAtLeast(1),
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = c.titleAlign.toAlign(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
-            if (s.showActions) {
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp)) {
-                    item.actions.forEach { a ->
-                        TextButton(onClick = {
-                            if (a.isReply) {
-                                replyTo = a
-                                panel = Panel.REPLY
-                            } else {
-                                NotifOps.press(context, a)
-                            }
-                        }) { Text(a.title, color = accent, maxLines = 1) }
-                    }
-                    IconButton(onClick = { panel = if (panel == Panel.SNOOZE) Panel.NONE else Panel.SNOOZE }) {
-                        Icon(Icons.Filled.Snooze, "Snooze", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = { panel = if (panel == Panel.ACTIONS) Panel.NONE else Panel.ACTIONS }) {
-                        Text("Actions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (c.showSubtitle && !c.subtitleInHeader && item.subText.isNotBlank()) {
+                    Text(
+                        item.subText,
+                        color = pick(c.subtitleColor, secondary),
+                        fontSize = c.subtitleSp.sp,
+                        fontWeight = if (c.subtitleBold) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (c.showBody) {
+                    val bodyStyle = Modifier.fillMaxWidth()
+                    if (chat) {
+                        item.messages.takeLast(bodyLines.coerceIn(1, 50)).forEach { m ->
+                            // In one-to-one chats the sender is the title; don't repeat it on every line.
+                            val showSender = m.sender.isNotBlank() && !(c.hideTitleFromBody && m.sender == item.title)
+                            Text(
+                                (if (showSender) m.sender + ": " else "") + m.text,
+                                color = pick(c.bodyColor, secondary),
+                                fontSize = c.bodySp.sp,
+                                fontWeight = if (c.bodyBold) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = c.bodyAlign.toAlign(),
+                                modifier = bodyStyle,
+                            )
+                        }
+                    } else if (item.displayText.isNotBlank() && !(c.hideTitleFromBody && item.displayText == item.title)) {
+                        Text(
+                            item.displayText,
+                            color = pick(c.bodyColor, secondary),
+                            fontSize = c.bodySp.sp,
+                            fontWeight = if (c.bodyBold) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = bodyLines,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = c.bodyAlign.toAlign(),
+                            modifier = bodyStyle,
+                        )
                     }
                 }
             }
-            when (panel) {
-                Panel.NONE -> Unit
-                Panel.REPLY -> replyTo?.let { a -> ReplyRow(a) { panel = Panel.NONE } }
-                Panel.SNOOZE -> SnoozeRow(item, s) { panel = Panel.NONE }
-                Panel.ACTIONS -> ExtractPanel(item)
-                Panel.MENU -> MenuRow(item, s, onClose) { panel = Panel.NONE }
+            if (bigIcon != null) {
+                Spacer(Modifier.width(10.dp))
+                NotifIcon(
+                    bigIcon,
+                    item.key + ":l:" + item.postTime + bigIcon.hashCode(),
+                    Modifier
+                        .size(c.largeIconDp.dp)
+                        .clip(if (c.roundLargeIcon) CircleShape else RoundedCornerShape(12.dp)),
+                )
             }
+        }
+        val pic = item.picture
+        if (s.showPictures && pic != null) {
+            Image(
+                bitmap = remember(pic) { pic.asImageBitmap() },
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .clip(RoundedCornerShape(14.dp)),
+            )
+        }
+        if (item.progressMax > 0 || item.progressIndeterminate) {
+            val barColor = pick(c.progressColor, accent)
+            if (item.progressIndeterminate) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp), color = barColor)
+            } else {
+                LinearProgressIndicator(
+                    progress = { item.progress / item.progressMax.toFloat() },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    color = barColor,
+                )
+            }
+        }
+        if (s.showActions) {
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                item.actions.forEach { a ->
+                    CardButton(a.title, c, accent) {
+                        if (a.isReply) {
+                            replyTo = a
+                            panel = Panel.REPLY
+                        } else {
+                            NotifOps.press(context, a)
+                        }
+                    }
+                }
+                IconButton(onClick = { panel = if (panel == Panel.SNOOZE) Panel.NONE else Panel.SNOOZE }) {
+                    Icon(Icons.Filled.Snooze, "Snooze", tint = secondary)
+                }
+                CardButton("Actions", c.copy(buttonColor = 0, buttonBackground = false, buttonBorder = false), secondary) {
+                    panel = if (panel == Panel.ACTIONS) Panel.NONE else Panel.ACTIONS
+                }
+            }
+        }
+        when (panel) {
+            Panel.NONE -> Unit
+            Panel.REPLY -> replyTo?.let { a -> ReplyRow(a) { panel = Panel.NONE } }
+            Panel.SNOOZE -> SnoozeRow(item, s) { panel = Panel.NONE }
+            Panel.ACTIONS -> ExtractPanel(item)
+            Panel.MENU -> MenuRow(item, s, onClose) { panel = Panel.NONE }
         }
     }
 }
@@ -600,15 +766,14 @@ private fun MenuRow(item: ShadeItem, s: AppSettings, onClose: () -> Unit, done: 
 private fun GroupCard(group: ShadeFilter.Group, s: AppSettings, onClose: () -> Unit) {
     val context = LocalContext.current
     val body = @Composable {
-        Surface(
-            shape = RoundedCornerShape(s.cardCornerDp.dp),
-            color = cardColor(s, MaterialTheme.colorScheme.surfaceContainer),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
+        Box(
+            Modifier.card(
+                s, accentFor(group.items.first(), s, MaterialTheme.colorScheme.primary),
+                onClick = {
                     NotifOps.open(context, group.items.first())
                     if (s.closeAfterOpen) onClose()
                 },
+            ),
         ) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -670,11 +835,7 @@ private fun MediaCard(m: MediaHub.Media, s: AppSettings) {
         }
     }
     val art = m.art
-    Surface(
-        shape = RoundedCornerShape(s.cardCornerDp.dp),
-        color = cardColor(s, MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier.fillMaxWidth().clickable { MediaHub.openApp(context) },
-    ) {
+    Box(Modifier.card(s, pick(s.card.mediaTint, MaterialTheme.colorScheme.primary), onClick = { MediaHub.openApp(context) })) {
         Box {
             if (s.albumArtBackground && art != null) {
                 Image(
@@ -691,7 +852,7 @@ private fun MediaCard(m: MediaHub.Media, s: AppSettings) {
                 )
             }
             val onArt = s.albumArtBackground && art != null
-            val fg = if (onArt) Color.White else MaterialTheme.colorScheme.onSurface
+            val fg = pick(s.card.mediaTint, if (onArt) Color.White else MaterialTheme.colorScheme.onSurface)
             Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AppIcon(m.pkg, Modifier.size(20.dp))
@@ -704,6 +865,9 @@ private fun MediaCard(m: MediaHub.Media, s: AppSettings) {
                 }
                 if (m.artist.isNotBlank()) {
                     Text(m.artist + if (m.album.isNotBlank()) " · " + m.album else "", color = fg.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (s.card.mediaNextTrack && m.nextTitle.isNotBlank()) {
+                    Text("Next: " + m.nextTitle, color = fg.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (m.durationMs > 0) {
                     Slider(
