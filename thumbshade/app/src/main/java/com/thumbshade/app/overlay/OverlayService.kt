@@ -416,7 +416,7 @@ class OverlayService : Service() {
     private fun addCluster(s: AppSettings) {
         val (w, h) = clusterSizePx(s)
         val params = OverlayWindows.params(w, h, touchable = false, noLimits = true)
-        val view = OverlayWindows.composeView(this, owner) { IconCluster() }
+        val view = OverlayWindows.composeView(this, owner) { IconCluster(pulse) }
         runCatching { wm.addView(view, params) }.onFailure { return }
         clusterView = view
         clusterParams = params

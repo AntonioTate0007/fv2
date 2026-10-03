@@ -367,8 +367,18 @@ private fun MediaFace(m: MediaHub.Media, look: MediaLook, tint: Color, dimPercen
 
 /** App icons of the latest notifications, around, above or beside the button. */
 @Composable
-fun IconCluster() {
+fun IconCluster(pulse: Int = 0) {
     val s by SettingsRepo.state.collectAsState()
+    // 0 = spread out, 1 = folded into the button. Each new notification spreads them again.
+    val fold = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(pulse, s.clusterFoldSeconds) {
+        fold.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow))
+        if (s.clusterFoldSeconds > 0) {
+            kotlinx.coroutines.delay(s.clusterFoldSeconds * 1000L)
+            fold.animateTo(1f, tween(500))
+        }
+    }
+    val spread = 1f - fold.value
     val all by NotificationRepo.items.collectAsState()
     val pkgs = remember(all, s) {
         ShadeFilter.visible(all, s).sortedByDescending { it.postTime }.map { it.pkg }.distinct()
@@ -406,8 +416,13 @@ fun IconCluster() {
                 pkg,
                 Modifier
                     .align(Alignment.Center)
-                    .offset { offset }
-                    .size(s.clusterIconDp.dp),
+                    .offset { IntOffset((offset.x * spread).toInt(), (offset.y * spread).toInt()) }
+                    .size(s.clusterIconDp.dp)
+                    .graphicsLayer {
+                        scaleX = 0.3f + 0.7f * spread
+                        scaleY = scaleX
+                        alpha = spread
+                    },
                 colorFilter = mono,
             )
         }
@@ -421,7 +436,8 @@ fun IconCluster() {
                 fontSize = 12.sp,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .offset { IntOffset((r * cos(angle)).toInt(), (r * sin(angle)).toInt()) }
+                    .offset { IntOffset((r * cos(angle) * spread).toInt(), (r * sin(angle) * spread).toInt()) }
+                    .graphicsLayer { alpha = spread }
                     .background(Color.Black.copy(alpha = 0.7f), CircleShape)
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )

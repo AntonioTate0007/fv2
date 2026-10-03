@@ -284,6 +284,8 @@ data class AppSettings(
     val clusterSide: ClusterSide = ClusterSide.RING,
     val clusterMax: Int = 7,
     val clusterIconDp: Int = 30,
+    /** Seconds after a new notification before the icons fold back into the button; 0 = never. */
+    val clusterFoldSeconds: Int = 6,
     val monochromeIcons: Boolean = false,
     val snapToEdge: Boolean = true,
     val snapStyle: SnapStyle = SnapStyle.HALF,

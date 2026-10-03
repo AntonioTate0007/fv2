@@ -302,6 +302,11 @@ fun ButtonScreen() {
             ChoiceRow("Layout", ClusterSide.entries, s.clusterSide, { it.label }) { v -> edit { it.copy(clusterSide = v) } }
             SliderRow("Max icons", s.clusterMax.toFloat(), 1f..12f, steps = 10) { v -> edit { it.copy(clusterMax = v.roundToInt()) } }
             SliderRow("Icon size", s.clusterIconDp.toFloat(), 16f..48f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(clusterIconDp = v.roundToInt()) } }
+            SliderRow(
+                "Fold back into the button after", s.clusterFoldSeconds.toFloat(), 0f..60f,
+                format = { if (it.roundToInt() == 0) "Never" else "${it.roundToInt()} s" },
+            ) { v -> edit { it.copy(clusterFoldSeconds = v.roundToInt()) } }
+            Hint("The icons fly out when a notification arrives, then tuck back in so they don't cover your apps.")
             SwitchRow("Monochrome icons", s.monochromeIcons) { v -> edit { it.copy(monochromeIcons = v) } }
         }
     }
