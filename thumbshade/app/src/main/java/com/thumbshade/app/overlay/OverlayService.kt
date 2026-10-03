@@ -91,7 +91,12 @@ class OverlayService : Service() {
         super.onCreate()
         instance = this
         wm = getSystemService(WindowManager::class.java)!!
-        startAsForeground()
+        // Android can refuse a foreground start (e.g. when the app isn't visible). Don't crash; stop
+        // quietly and let the next app launch start the service again.
+        if (runCatching { startAsForeground() }.onFailure { android.util.Log.w("ThumbShade", "startForeground refused", it) }.isFailure) {
+            stopSelf()
+            return
+        }
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
 
         scope.launch {
