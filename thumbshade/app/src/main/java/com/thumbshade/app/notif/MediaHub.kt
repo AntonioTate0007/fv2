@@ -28,6 +28,9 @@ object MediaHub {
         val actions: Long,
         val customActions: List<PlaybackState.CustomAction>,
         val nextTitle: String = "",
+        val shuffleOn: Boolean = false,
+        /** 0 = off, 1 = repeat one, 2 = repeat all. */
+        val repeatMode: Int = 0,
     ) {
         /** Position extrapolated to now. */
         fun livePosition(): Long {
@@ -38,7 +41,28 @@ object MediaHub {
         }
 
         fun can(action: Long) = actions and action != 0L
+
+        /** True when the app already shows its own shuffle / repeat button among its custom actions. */
+        private fun hasOwn(word: String) = customActions.any {
+            it.action.contains(word, true) || it.name?.toString()?.contains(word, true) == true
+        }
+        val canShuffle: Boolean get() = can(ACTION_SET_SHUFFLE_MODE) && !hasOwn("shuffle")
+        val canRepeat: Boolean get() = can(ACTION_SET_REPEAT_MODE) && !hasOwn("repeat")
     }
+
+    // Shuffle and repeat are not in the platform's TransportControls; media apps built on the
+    // support/media3 libraries take them as these custom actions, and advertise them in the
+    // playback state's action bits.
+    private const val ACTION_SET_SHUFFLE_MODE = 1L shl 21
+    private const val ACTION_SET_REPEAT_MODE = 1L shl 18
+    private const val CMD_SHUFFLE = "android.support.v4.media.session.action.SET_SHUFFLE_MODE"
+    private const val ARG_SHUFFLE = "android.support.v4.media.session.action.ARGUMENT_SHUFFLE_MODE"
+    private const val CMD_REPEAT = "android.support.v4.media.session.action.SET_REPEAT_MODE"
+    private const val ARG_REPEAT = "android.support.v4.media.session.action.ARGUMENT_REPEAT_MODE"
+
+    /** The platform doesn't report the current modes, so remember what we last set per app. */
+    private val shuffleByPkg = mutableMapOf<String, Boolean>()
+    private val repeatByPkg = mutableMapOf<String, Int>()
 
     private val _state = MutableStateFlow<Media?>(null)
     val state: StateFlow<Media?> = _state
@@ -110,7 +134,26 @@ object MediaHub {
                 val i = queue.indexOfFirst { it.queueId == ps?.activeQueueItemId }
                 queue.getOrNull(i + 1)?.takeIf { i >= 0 }?.description?.title?.toString()
             }.getOrNull().orEmpty(),
+            shuffleOn = shuffleByPkg[c.packageName] ?: false,
+            repeatMode = repeatByPkg[c.packageName] ?: 0,
         )
+    }
+
+    fun toggleShuffle() {
+        val c = controller ?: return
+        val on = !(shuffleByPkg[c.packageName] ?: false)
+        runCatching { c.transportControls.sendCustomAction(CMD_SHUFFLE, android.os.Bundle().apply { putInt(ARG_SHUFFLE, if (on) 1 else 0) }) }
+        shuffleByPkg[c.packageName] = on
+        publish()
+    }
+
+    /** Off → all → one → off, the order most players use. */
+    fun cycleRepeat() {
+        val c = controller ?: return
+        val next = when (repeatByPkg[c.packageName] ?: 0) { 0 -> 2; 2 -> 1; else -> 0 }
+        runCatching { c.transportControls.sendCustomAction(CMD_REPEAT, android.os.Bundle().apply { putInt(ARG_REPEAT, next) }) }
+        repeatByPkg[c.packageName] = next
+        publish()
     }
 
     fun playPause() {

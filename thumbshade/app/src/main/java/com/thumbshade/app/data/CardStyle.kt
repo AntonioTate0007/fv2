@@ -36,6 +36,8 @@ data class CardStyle(
     val headerIconDp: Int = 18,
     val appBadge: Boolean = true,
     val headerLines: Int = 1,
+    /** Snooze and menu buttons at the end of the header. */
+    val headerButtons: Boolean = true,
     val showSubtitle: Boolean = true,
     val subtitleInHeader: Boolean = true,
     val subtitleSp: Int = 12,
@@ -84,6 +86,9 @@ data class CardStyle(
     val buttonCornerDp: Int = 14,
     val buttonPaddingDp: Int = 8,
     val progressColor: Long = 0,
+
+    // Apps' own layouts
+    val appLayouts: Boolean = true,
 
     // Media player
     val mediaTint: Long = 0,

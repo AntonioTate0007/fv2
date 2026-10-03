@@ -14,6 +14,9 @@ enum class GestureType(val label: String) {
     TOGGLE_SHADE("Open / close the shade"),
     OPEN_LATEST("Open the newest notification"),
     OPEN_APP("Open an app"),
+    APP_SCREEN("Open an app screen"),
+    SHORTCUT("Run a shortcut"),
+    CUSTOM_INTENT("Send a custom intent"),
     BACK("Back"),
     HOME("Home"),
     RECENTS("Recent apps"),
@@ -35,7 +38,12 @@ enum class GestureType(val label: String) {
 }
 
 @Serializable
-data class GestureAction(val type: GestureType = GestureType.NONE, val arg: String = "")
+data class GestureAction(
+    val type: GestureType = GestureType.NONE,
+    val arg: String = "",
+    /** What to call it in the settings, for shortcuts and intents. */
+    val label: String = "",
+)
 
 @Serializable
 data class GestureMode(
@@ -75,8 +83,6 @@ enum class LandscapeBehavior(val label: String) { RELATIVE("Relative position"),
 @Serializable
 enum class SnapStyle(val label: String) { HALF("Half tucked behind the edge"), FULL("Fully on screen, flush with the edge") }
 
-@Serializable
-enum class ButtonAnim(val label: String) { NONE("None"), POP("Pop"), FADE("Fade"), SLIDE("Slide from the edge"), ZOOM("Zoom"), SPIN("Spin") }
 
 @Serializable
 enum class NotifAnim(val label: String) { NONE("None"), POP("Pop"), HOP("Hop"), WIGGLE("Wiggle"), GLOW("Glow flash") }
@@ -94,6 +100,15 @@ enum class MediaLook(val label: String) {
 }
 
 @Serializable
+enum class AnimatedIcon(val label: String) {
+    NONE("None"), RIM_LIGHT("Rim light"), MESH_ORB("Mesh orb"), BATTERY_DOTS("Battery dots"),
+    OCEAN_WAVE("Ocean wave"), RADAR("Radar"), RIPPLE("Ripple"), FIREFLIES("Fireflies"),
+    SPECTRUM("Spectrum"), SHIMMER("Shimmer"), CONSTELLATION("Constellation"), HEARTBEAT("Heartbeat"),
+    STARFIELD("Starfield"), SHAPE_MORPH("Shape morph"), ORBIT("Orbit"), CLOCK("Clock"),
+    BATTERY_RING("Battery ring"), AURORA("Aurora"),
+}
+
+@Serializable
 enum class ChargingMode(val label: String) { NONE("None"), RING("Ring"), PROGRESS("Progress ring (battery level)") }
 
 @Serializable
@@ -105,7 +120,14 @@ enum class ShadeAlign(val label: String) { LEFT("Left"), CENTER("Centre"), RIGHT
 @Serializable
 enum class ShadeAnim(val label: String) {
     SLIDE("Slide"), FADE("Fade"), SCALE("Scale"), EXPAND("Unfold"), BOUNCE("Bounce"), DROP("Drop in"),
-    NONE("None (instant)"), ZOOM("Zoom"), POP("Pop"), ELASTIC("Elastic"), GLIDE("Glide"),
+    NONE("None (instant)"), ZOOM("Zoom"), POP("Pop"), ELASTIC("Elastic"), GLIDE("Glide from the right"),
+    GLIDE_LEFT("Glide from the left"), RISE("Rise"), FALL("Fall from above"), FLIP("Flip up"),
+    FLIP_SIDE("Flip sideways"), PAPER("Paper fold"), DOOR("Door (left hinge)"), DOOR_RIGHT("Door (right hinge)"),
+    SWING("Swing"), SWING_RIGHT("Swing (right)"), SPIN("Spin"), TWIRL("Twirl"), TUMBLE("Tumble"),
+    CURTAIN("Curtain"), BLINDS("Blinds"), CORNER_LEFT("Grow from the left corner"),
+    CORNER_RIGHT("Grow from the right corner"), TILT("Tilt"), SWOOP("Swoop"), SQUASH("Squash"),
+    STRETCH("Stretch"), WOBBLE("Wobble"), JELLY("Jelly"), SLINGSHOT("Slingshot"), GROW("Grow"),
+    SHRINK("Shrink into place"), DEAL("Deal (like a card)"),
 }
 
 @Serializable
@@ -120,19 +142,47 @@ enum class BrowseStyle(val label: String) {
     SWAY("Sway (cards swing like hanging signs)"),
     TUMBLE("Tumble (cards cartwheel away)"),
     HELIX("Helix (cards turn on a corkscrew)"),
+    CARD_STACK("Card stack (focused card on top, others stacked behind)"),
+    BOOK("Book (cards turn like pages)"),
+    CONVEYOR("Conveyor (cards ride a slanted belt)"),
+    CRESCENT("Crescent (cards follow a curve)"),
+    FLYTHROUGH("Fly-through (cards grow as they come closer)"),
+    LENS("Lens (the middle card is magnified)"),
+    ORIGAMI("Origami (cards fold in alternate directions)"),
+    PINCH("Pinch (cards narrow towards the ends)"),
+    SWIRL("Swirl (cards swirl round the middle)"),
+    SWIVEL("Swivel (cards turn on their left edge)"),
 }
+
+@Serializable
+enum class ShadeOverlay(val label: String) { NONE("None"), DIM("Dim"), BLUR("Blur"), DIM_BLUR("Dim and blur") }
 
 @Serializable
 enum class EdgeStyle(val label: String, val aroundButton: Boolean = false) {
     BASIC("Basic"),
     MULTICOLOUR("Multicolour"),
     GLOW("Glow"),
-    HEARTBEAT("Heartbeat"),
+    ECHO("Echo"),
     NEON("Neon"),
+    LIGHTNING("Lightning"),
+    RISE("Rise"),
+    HEARTBEAT("Heartbeat"),
+    DRIP("Drip"),
+    CONVERGE("Converge"),
     COMET("Comet"),
-    RIPPLE("Ripple (button)", true),
-    SONAR("Sonar (button)", true),
-    HALO("Halo (button)", true),
+    WAVE("Wave", true),
+    BUBBLES("Bubbles", true),
+    FIREWORKS("Fireworks", true),
+    ECLIPSE("Eclipse", true),
+    SPOTLIGHT("Spotlight", true),
+    HALO("Halo", true),
+    RIPPLE("Ripple", true),
+    SPARKLE("Sparkle", true),
+    PULSE_RINGS("Pulse rings", true),
+    CHARGE("Charge", true),
+    VORTEX("Vortex", true),
+    SONAR("Sonar", true),
+    CONFETTI("Confetti", true),
 }
 
 @Serializable
@@ -202,7 +252,10 @@ data class AppSettings(
     val mediaOnlyPlaying: Boolean = true,
     val mediaDimPercent: Int = 0,
     val mediaAnimColor: Long = 0xFF4DD9C9,
-    val appearAnim: ButtonAnim = ButtonAnim.POP,
+    val appearAnim: ShadeAnim = ShadeAnim.POP,
+    val animatedIcon: AnimatedIcon = AnimatedIcon.NONE,
+    /** 0 = the button's accent colour. */
+    val animatedIconColor: Long = 0,
     val newNotifAnim: NotifAnim = NotifAnim.POP,
     val newNotifIntensity: Int = 60,
     val iconCluster: Boolean = true,
@@ -246,6 +299,13 @@ data class AppSettings(
     val rowSpacingDp: Int = 8,
     val newestAtBottom: Boolean = true,
     val dimBehind: Float = 0.55f,
+    val shadeOverlay: ShadeOverlay = ShadeOverlay.DIM,
+    val blurRadiusDp: Int = 24,
+    val rememberScroll: Boolean = false,
+    val pushPullClose: Boolean = false,
+    val pullCloseDp: Int = 90,
+    val wrapAround: Boolean = false,
+    val swipeDismissFraction: Float = 0.4f,
     val browseStyle: BrowseStyle = BrowseStyle.LIST,
     val shadeAnim: ShadeAnim = ShadeAnim.SLIDE,
     val cardCornerDp: Int = 24,

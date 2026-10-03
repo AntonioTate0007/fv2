@@ -30,7 +30,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
-import com.thumbshade.app.data.ButtonAnim
 import com.thumbshade.app.data.ChargingAnim
 import com.thumbshade.app.data.ChargingMode
 import com.thumbshade.app.data.ColorSource
@@ -138,25 +137,10 @@ fun ButtonFace(
         }
     }
 
-    val enter: EnterTransition = when (s.appearAnim) {
-        ButtonAnim.NONE -> EnterTransition.None
-        ButtonAnim.POP -> scaleIn(spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMediumLow)) + fadeIn()
-        ButtonAnim.FADE -> fadeIn(tween(350))
-        ButtonAnim.SLIDE -> slideInHorizontally { if (dockedRight) it else -it } + fadeIn()
-        ButtonAnim.ZOOM -> scaleIn(initialScale = 0.2f) + fadeIn()
-        ButtonAnim.SPIN -> scaleIn(initialScale = 0.3f) + fadeIn()
-    }
-    val exit: ExitTransition = when (s.appearAnim) {
-        ButtonAnim.NONE -> ExitTransition.None
-        ButtonAnim.POP -> scaleOut(tween(200)) + fadeOut(tween(200))
-        ButtonAnim.FADE -> fadeOut(tween(300))
-        ButtonAnim.SLIDE -> slideOutHorizontally { if (dockedRight) it else -it } + fadeOut()
-        ButtonAnim.ZOOM -> scaleOut(targetScale = 0.2f) + fadeOut()
-        ButtonAnim.SPIN -> scaleOut(targetScale = 0.3f) + fadeOut()
-    }
-
-    AnimatedVisibility(visibleState = shown, enter = enter, exit = exit, modifier = Modifier.fillMaxSize()) {
-        val spin by transition.animateFloat(label = "spin") { st -> if (st == EnterExitState.Visible || s.appearAnim != ButtonAnim.SPIN) 0f else -270f }
+    AnimatedVisibility(visibleState = shown, enter = EnterTransition.None, exit = ExitTransition.None, modifier = Modifier.fillMaxSize()) {
+        val appear by with(Anims) { progress(s.appearAnim) }
+        // The button travels to and from the screen edge it sits nearest.
+        val side = if (dockedRight) 1 else -1
         val shape: Shape = when {
             dockedLook -> RoundedCornerShape(percent = s.dockedCornerPercent.coerceIn(0, 50))
             s.perCorner -> RoundedCornerShape(
@@ -188,11 +172,12 @@ fun ButtonFace(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(2.dp)
+                .graphicsLayer { with(Anims) { apply(s.appearAnim, appear, side) } }
                 .graphicsLayer {
                     scaleX = scale.value
                     scaleY = scale.value
                     translationY = hop.value * density
-                    rotationZ = tilt.value + spin
+                    rotationZ = tilt.value
                     alpha = if (dockedLook) s.dockedAlpha else s.buttonAlpha
                 }
                 .drawBehind {
@@ -233,6 +218,11 @@ fun ButtonFace(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
+                    AnimatedIconView(
+                        s.animatedIcon,
+                        if (s.animatedIconColor != 0L) Color(s.animatedIconColor) else accent,
+                        Modifier.fillMaxSize(),
+                    )
                     val m = media
                     val showMedia = s.mediaLook != MediaLook.NOTHING && m != null && (m.playing || !s.mediaOnlyPlaying)
                     when {

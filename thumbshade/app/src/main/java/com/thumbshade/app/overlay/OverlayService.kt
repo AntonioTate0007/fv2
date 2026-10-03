@@ -432,7 +432,7 @@ class OverlayService : Service() {
         clusterView?.let { v -> runCatching { wm.removeView(v) } }
         clusterView = null
         clusterParams = null
-        main.postDelayed({ if (hiding && !buttonShown.targetState) removeButton() }, 400)
+        main.postDelayed({ if (hiding && !buttonShown.targetState) removeButton() }, 650)
     }
 
     private fun removeButton() {
@@ -501,6 +501,11 @@ class OverlayService : Service() {
             focusable = true,
         ).apply {
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            val overlay = SettingsRepo.current.shadeOverlay
+            if (android.os.Build.VERSION.SDK_INT >= 31 && (overlay == com.thumbshade.app.data.ShadeOverlay.BLUR || overlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR)) {
+                flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+                blurBehindRadius = (SettingsRepo.current.blurRadiusDp * resources.displayMetrics.density).toInt()
+            }
         }
         val frame = KeyFrame(this) { closeShade() }
         owner.attach(frame)
@@ -524,7 +529,7 @@ class OverlayService : Service() {
     fun closeShade() {
         if (shadeView == null) return
         shadeState.targetState = false
-        main.postDelayed({ if (!shadeState.targetState) removeShadeNow() }, 450)
+        main.postDelayed({ if (!shadeState.targetState) removeShadeNow() }, 650)
     }
 
     private fun removeShadeNow() {

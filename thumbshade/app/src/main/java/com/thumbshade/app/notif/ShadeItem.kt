@@ -62,6 +62,8 @@ data class ShadeItem(
     val silent: Boolean,
     /** Picture of the person (or group) the notification is from, for chats. */
     val senderIcon: Icon?,
+    /** The app's own layout, for notifications that draw a custom view (weather, sports scores…). */
+    val customView: android.widget.RemoteViews?,
     val sbn: StatusBarNotification,
 ) {
     val displayText: String get() = bigText.ifBlank { text }
@@ -172,6 +174,7 @@ data class ShadeItem(
                 senderIcon = (if (Build.VERSION.SDK_INT >= 30) extras.get("android.conversationIcon") as? Icon else null)
                     ?: lastSenderIcon
                     ?: if (isMessaging) n.getLargeIcon() else null,
+                customView = n.bigContentView ?: n.contentView,
                 sbn = sbn,
             )
         }

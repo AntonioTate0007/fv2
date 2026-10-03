@@ -58,6 +58,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Forward10
@@ -113,6 +117,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.drawable.toBitmap
 import com.thumbshade.app.data.AppSettings
 import com.thumbshade.app.data.BrowseStyle
@@ -133,38 +138,25 @@ import com.thumbshade.app.ui.NotifIcon
 import com.thumbshade.app.ui.ThumbTheme
 import com.thumbshade.app.ui.relativeTime
 import kotlinx.coroutines.delay
+import androidx.compose.animation.core.Animatable
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
 
 private enum class Panel { NONE, REPLY, SNOOZE, ACTIONS, MENU }
-
-private fun enterFor(anim: ShadeAnim): EnterTransition = when (anim) {
-    ShadeAnim.SLIDE -> slideInVertically { it } + fadeIn()
-    ShadeAnim.FADE -> fadeIn()
-    ShadeAnim.SCALE -> scaleIn(initialScale = 0.8f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn()
-    ShadeAnim.EXPAND -> expandVertically(expandFrom = Alignment.Bottom) + fadeIn()
-    ShadeAnim.BOUNCE -> slideInVertically(spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow)) { it }
-    ShadeAnim.DROP -> slideInVertically { -it / 3 } + fadeIn()
-    ShadeAnim.NONE -> EnterTransition.None
-    ShadeAnim.ZOOM -> scaleIn(initialScale = 0.3f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeIn()
-    ShadeAnim.POP -> scaleIn(spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.6f) + fadeIn()
-    ShadeAnim.ELASTIC -> slideInVertically(spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessLow)) { it / 2 } + fadeIn()
-    ShadeAnim.GLIDE -> slideInHorizontally { it } + fadeIn()
-}
-
-private fun exitFor(anim: ShadeAnim): ExitTransition = when (anim) {
-    ShadeAnim.SLIDE, ShadeAnim.BOUNCE -> slideOutVertically { it } + fadeOut()
-    ShadeAnim.FADE -> fadeOut()
-    ShadeAnim.SCALE -> scaleOut(targetScale = 0.8f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut()
-    ShadeAnim.EXPAND -> shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
-    ShadeAnim.DROP -> slideOutVertically { it / 3 } + fadeOut()
-    ShadeAnim.NONE -> ExitTransition.None
-    ShadeAnim.ZOOM -> scaleOut(targetScale = 0.3f, transformOrigin = TransformOrigin(0.5f, 1f)) + fadeOut()
-    ShadeAnim.POP -> scaleOut(targetScale = 0.7f) + fadeOut()
-    ShadeAnim.ELASTIC -> slideOutVertically { it / 2 } + fadeOut()
-    ShadeAnim.GLIDE -> slideOutHorizontally { -it } + fadeOut()
-}
 
 @Composable
 fun ShadeScreen(
@@ -178,7 +170,8 @@ fun ShadeScreen(
         val media by MediaHub.state.collectAsState()
         val held by HoldStore.held.collectAsState()
         val entries = remember(all, s) { ShadeFilter.entries(all, s) }
-        val dim by animateFloatAsState(if (visibleState.targetState) s.dimBehind else 0f, label = "dim")
+        val dims = s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM || s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR
+        val dim by animateFloatAsState(if (visibleState.targetState && dims) s.dimBehind else 0f, label = "dim")
 
         LaunchedEffect(entries.isEmpty(), media == null) {
             if (s.closeWhenEmpty && entries.isEmpty() && media == null && visibleState.currentState) {
@@ -195,8 +188,8 @@ fun ShadeScreen(
         ) {
             AnimatedVisibility(
                 visibleState = visibleState,
-                enter = enterFor(s.shadeAnim),
-                exit = exitFor(s.shadeAnim),
+                enter = EnterTransition.None,
+                exit = ExitTransition.None,
                 modifier = Modifier.align(
                     when (s.shadeAlign) {
                         com.thumbshade.app.data.ShadeAlign.LEFT -> Alignment.BottomStart
@@ -205,7 +198,10 @@ fun ShadeScreen(
                     }
                 ),
             ) {
-                ShadePanel(s, entries, media, held.size, onClose, onOpenSettings)
+                val p by with(Anims) { progress(s.shadeAnim) }
+                Box(Modifier.graphicsLayer { with(Anims) { apply(s.shadeAnim, p, 0) } }) {
+                    ShadePanel(s, entries, media, held.size, onClose, onOpenSettings)
+                }
             }
         }
     }
@@ -223,9 +219,65 @@ private fun ShadePanel(
     val config = LocalConfiguration.current
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
+    var restored by remember { mutableStateOf(false) }
     LaunchedEffect(entries.size) {
-        if (s.newestAtBottom && entries.isNotEmpty()) listState.scrollToItem(entries.lastIndex)
+        if (entries.isEmpty()) return@LaunchedEffect
+        if (!restored && s.rememberScroll && ShadeMemory.index >= 0) {
+            listState.scrollToItem(ShadeMemory.index.coerceAtMost(entries.lastIndex), ShadeMemory.offset)
+        } else if (s.newestAtBottom) {
+            listState.scrollToItem(entries.lastIndex)
+        }
+        restored = true
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            ShadeMemory.index = listState.firstVisibleItemIndex
+            ShadeMemory.offset = listState.firstVisibleItemScrollOffset
+        }
+    }
+
+    // Pulling past either end of the list: closes the shade (push/pull to close) or jumps to the
+    // other end (wrap-around). The panel follows the finger with a rubber-band feel.
+    val pull = remember { Animatable(0f) }
+    val threshold = with(density) { s.pullCloseDp.dp.toPx() }
+    val pullEnabled = s.pushPullClose || s.wrapAround
+    val connection = remember(pullEnabled, threshold, entries.size) {
+        object : NestedScrollConnection {
+            var raw = 0f
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (raw == 0f || available.y == 0f || kotlin.math.sign(available.y) == kotlin.math.sign(raw)) return Offset.Zero
+                // Scrolling back the other way first undoes the pull.
+                val used = if (abs(available.y) > abs(raw)) -raw else available.y
+                raw += used
+                scope.launch { pull.snapTo(raw) }
+                return Offset(0f, used)
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (!pullEnabled || source != NestedScrollSource.UserInput || available.y == 0f) return Offset.Zero
+                raw += available.y
+                scope.launch { pull.snapTo(raw) }
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                val r = raw
+                raw = 0f
+                if (abs(r) >= threshold) {
+                    if (s.pushPullClose) {
+                        onClose()
+                    } else if (entries.isNotEmpty()) {
+                        // Pulled up past the bottom → go to the top, and the other way round.
+                        listState.scrollToItem(if (r < 0) 0 else entries.lastIndex)
+                    }
+                }
+                pull.animateTo(0f, spring(dampingRatio = 0.7f))
+                return if (r != 0f) available else Velocity.Zero
+            }
+        }
     }
 
     Column(
@@ -277,10 +329,21 @@ private fun ShadePanel(
         LazyColumn(
             state = listState,
             verticalArrangement = Arrangement.spacedBy(s.rowSpacingDp.dp),
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .nestedScroll(connection)
+                .graphicsLayer {
+                    // Rubber band: the further you pull, the harder it gets.
+                    val r = pull.value
+                    translationY = r * 0.5f / (1f + abs(r) / (threshold * 3f))
+                },
         ) {
             items(entries, key = { it.id }) { entry ->
-                Box(Modifier.browse(listState, entry.id, s.browseStyle)) {
+                val z = if (s.browseStyle == BrowseStyle.CARD_STACK) {
+                    val depth by remember(entry.id) { derivedStateOf { stackDepth(listState, entry.id) } }
+                    -depth
+                } else 0f
+                Box(Modifier.zIndex(z).browse(listState, entry.id, s.browseStyle)) {
                     when (entry) {
                         is ShadeFilter.Single -> NotificationCard(entry.item, s, onClose)
                         is ShadeFilter.Group -> GroupCard(entry, s, onClose)
@@ -289,6 +352,21 @@ private fun ShadePanel(
             }
         }
     }
+}
+
+/** Where the list was when the shade closed, for "Remember scroll position". */
+private object ShadeMemory {
+    var index = -1
+    var offset = 0
+}
+
+/** How far a card sits from the middle of the list, 0 (middle) .. 1 (an edge). */
+private fun stackDepth(state: LazyListState, key: Any): Float {
+    val info = state.layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.key == key } ?: return 1f
+    val viewport = (info.viewportEndOffset - info.viewportStartOffset).toFloat().coerceAtLeast(1f)
+    val center = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+    return (abs(item.offset + item.size / 2f - center) / viewport).coerceIn(0f, 1f)
 }
 
 /**
@@ -337,6 +415,43 @@ private fun Modifier.browse(state: LazyListState, key: Any, style: BrowseStyle):
             BrowseStyle.HELIX -> {
                 rotationY = f * 55f
                 translationX = sin(f * PI.toFloat()) * 20f * density
+            }
+            BrowseStyle.CARD_STACK -> {
+                // Cards slide in under the middle one and shrink, like a fanned-out deck.
+                translationY = -f * item.size * 0.55f
+                scaleX = 1f - a * 0.22f; scaleY = scaleX
+                alpha = 1f - a * 0.35f
+            }
+            BrowseStyle.BOOK -> {
+                transformOrigin = TransformOrigin(0.5f, if (f < 0) 1f else 0f)
+                rotationX = f * 70f
+                alpha = 1f - a * 0.3f
+            }
+            BrowseStyle.CONVEYOR -> {
+                translationX = f * size.width * 0.3f
+                scaleX = 1f - a * 0.1f; scaleY = scaleX
+            }
+            BrowseStyle.CRESCENT -> translationX = a * a * 90f * density
+            BrowseStyle.FLYTHROUGH -> {
+                scaleX = (1f + f * 0.35f).coerceAtLeast(0.4f); scaleY = scaleX
+                alpha = 1f - a * 0.6f
+            }
+            BrowseStyle.LENS -> {
+                scaleX = 1.08f - a * 0.28f; scaleY = scaleX
+                alpha = 1f - a * 0.3f
+            }
+            BrowseStyle.ORIGAMI -> {
+                rotationX = (if (item.index % 2 == 0) 1f else -1f) * f * 50f
+                alpha = 1f - a * 0.3f
+            }
+            BrowseStyle.PINCH -> scaleX = 1f - a * 0.35f
+            BrowseStyle.SWIRL -> {
+                rotationZ = f * a * 30f
+                translationX = sin(f * 2f * PI.toFloat()) * 24f * density
+            }
+            BrowseStyle.SWIVEL -> {
+                transformOrigin = TransformOrigin(0f, 0.5f)
+                rotationY = f * 40f
             }
         }
     }
@@ -387,7 +502,7 @@ private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, on
 @Composable
 private fun NotificationCard(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
     if (s.swipeToDismiss && item.clearable) {
-        val state = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+        val state = rememberSwipeToDismissBoxState(positionalThreshold = { it * s.swipeDismissFraction }, confirmValueChange = { v ->
             if (v != SwipeToDismissBoxValue.Settled) {
                 NotifOps.dismiss(item)
                 true
@@ -510,6 +625,25 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                     fontWeight = if (c.timeBold) FontWeight.Bold else FontWeight.Normal,
                 )
             }
+            if (c.headerButtons) {
+                Icon(
+                    Icons.Outlined.Schedule, "Snooze", tint = secondary,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .clickable { panel = if (panel == Panel.SNOOZE) Panel.NONE else Panel.SNOOZE }
+                        .padding(6.dp),
+                )
+                Icon(
+                    Icons.Filled.MoreVert, "More", tint = secondary,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .clickable { panel = if (panel == Panel.MENU) Panel.NONE else Panel.MENU }
+                        .padding(5.dp),
+                )
+            }
         }
 
         val chat = item.messages.isNotEmpty()
@@ -519,7 +653,9 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
             chat && c.hideSenderIfInHeader && c.headerIcon == HeaderIcon.SENDER -> null
             else -> item.largeIcon
         }
-        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
+        val custom = item.customView.takeIf { c.appLayouts }
+        if (custom != null) AppLayout(item.key + item.postTime, custom)
+        else Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
                 if (c.showTitle && item.title.isNotBlank()) {
                     Text(
@@ -622,8 +758,10 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                         }
                     }
                 }
-                IconButton(onClick = { panel = if (panel == Panel.SNOOZE) Panel.NONE else Panel.SNOOZE }) {
-                    Icon(Icons.Filled.Snooze, "Snooze", tint = secondary)
+                if (!c.headerButtons) {
+                    IconButton(onClick = { panel = if (panel == Panel.SNOOZE) Panel.NONE else Panel.SNOOZE }) {
+                        Icon(Icons.Filled.Snooze, "Snooze", tint = secondary)
+                    }
                 }
                 CardButton("Actions", c.copy(buttonColor = 0, buttonBackground = false, buttonBorder = false), secondary) {
                     panel = if (panel == Panel.ACTIONS) Panel.NONE else Panel.ACTIONS
@@ -813,7 +951,7 @@ private fun GroupCard(group: ShadeFilter.Group, s: AppSettings, onClose: () -> U
         }
     }
     if (s.swipeToDismiss) {
-        val state = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+        val state = rememberSwipeToDismissBoxState(positionalThreshold = { it * s.swipeDismissFraction }, confirmValueChange = { v ->
             if (v != SwipeToDismissBoxValue.Settled) {
                 group.items.forEach(NotifOps::dismiss)
                 true
@@ -862,6 +1000,9 @@ private fun MediaCard(m: MediaHub.Media, s: AppSettings) {
                         IconButton(onClick = { MediaHub.seekBy(-10_000) }) { Icon(Icons.Filled.Replay10, "Back 10 s", tint = fg) }
                         IconButton(onClick = { MediaHub.seekBy(10_000) }) { Icon(Icons.Filled.Forward10, "Forward 10 s", tint = fg) }
                     }
+                    if (m.can(android.media.session.PlaybackState.ACTION_STOP)) {
+                        IconButton(onClick = { MediaHub.stop() }) { Icon(Icons.Filled.Stop, "Stop", tint = fg) }
+                    }
                 }
                 if (m.artist.isNotBlank()) {
                     Text(m.artist + if (m.album.isNotBlank()) " · " + m.album else "", color = fg.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -889,7 +1030,14 @@ private fun MediaCard(m: MediaHub.Media, s: AppSettings) {
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    m.customActions.take(2).forEach { ca ->
+                    // Room for at most two extra buttons on each side of the transport controls.
+                    val perSide = if (m.canShuffle || m.canRepeat) 1 else 2
+                    if (m.canShuffle) {
+                        IconButton(onClick = { MediaHub.toggleShuffle() }) {
+                            Icon(Icons.Filled.Shuffle, "Shuffle", tint = if (m.shuffleOn) fg else fg.copy(alpha = 0.45f))
+                        }
+                    }
+                    m.customActions.take(perSide).forEach { ca ->
                         CustomActionButton(ca, fg)
                     }
                     IconButton(onClick = { MediaHub.previous() }) { Icon(Icons.Filled.SkipPrevious, "Previous", tint = fg, modifier = Modifier.size(32.dp)) }
@@ -897,13 +1045,44 @@ private fun MediaCard(m: MediaHub.Media, s: AppSettings) {
                         Icon(if (m.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play / pause", tint = fg, modifier = Modifier.size(44.dp))
                     }
                     IconButton(onClick = { MediaHub.next() }) { Icon(Icons.Filled.SkipNext, "Next", tint = fg, modifier = Modifier.size(32.dp)) }
-                    m.customActions.drop(2).take(2).forEach { ca ->
+                    m.customActions.drop(perSide).take(perSide).forEach { ca ->
                         CustomActionButton(ca, fg)
+                    }
+                    if (m.canRepeat) {
+                        IconButton(onClick = { MediaHub.cycleRepeat() }) {
+                            Icon(
+                                if (m.repeatMode == 1) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                                "Repeat",
+                                tint = if (m.repeatMode != 0) fg else fg.copy(alpha = 0.45f),
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * Inflates a notification's custom RemoteViews, the way the system shade does. If the app's
+ * layout can't be inflated here, nothing is drawn and the card keeps just its header.
+ */
+@Composable
+private fun AppLayout(key: String, views: android.widget.RemoteViews) {
+    AndroidView(
+        factory = { ctx -> android.widget.FrameLayout(ctx) },
+        modifier = Modifier
+            .padding(top = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp)),
+        update = { frame ->
+            if (frame.tag != key) {
+                frame.tag = key
+                frame.removeAllViews()
+                runCatching { views.apply(frame.context, frame) }.getOrNull()?.let { frame.addView(it) }
+            }
+        },
+    )
 }
 
 @Composable

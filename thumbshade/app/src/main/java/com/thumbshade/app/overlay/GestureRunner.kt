@@ -28,6 +28,7 @@ object GestureRunner {
                 if (latest != null) NotifOps.open(context, latest) else Effects.toast(context, "No notifications")
             }
             GestureType.OPEN_APP -> launch(context, action.arg)
+            GestureType.APP_SCREEN, GestureType.SHORTCUT, GestureType.CUSTOM_INTENT -> fire(context, action.type, action.arg)
             GestureType.BACK -> global(context, AccessibilityService.GLOBAL_ACTION_BACK)
             GestureType.HOME -> global(context, AccessibilityService.GLOBAL_ACTION_HOME)
             GestureType.RECENTS -> global(context, AccessibilityService.GLOBAL_ACTION_RECENTS)
@@ -90,6 +91,41 @@ object GestureRunner {
             ?: return
         runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             .onFailure { Effects.toast(context, "Could not open it") }
+    }
+
+    /**
+     * Runs an app screen ("pkg/Class"), a shortcut (an intent URI) or a custom intent
+     * ("activity:", "broadcast:" or "service:" followed by an intent URI).
+     * Returns an error message, or null when it worked.
+     */
+    fun fire(context: Context, type: GestureType, arg: String): String? {
+        if (arg.isBlank()) return "Nothing chosen yet"
+        val result = runCatching {
+            when (type) {
+                GestureType.APP_SCREEN -> {
+                    val cn = android.content.ComponentName.unflattenFromString(arg) ?: error("Not an app screen")
+                    context.startActivity(Intent().setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                GestureType.SHORTCUT -> context.startActivity(Intent.parseUri(arg, Intent.URI_INTENT_SCHEME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                else -> {
+                    val target = arg.substringBefore(':')
+                    val intent = Intent.parseUri(arg.substringAfter(':'), Intent.URI_INTENT_SCHEME)
+                    when (target) {
+                        "broadcast" -> context.sendBroadcast(intent)
+                        "service" -> context.startService(intent)
+                        else -> context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                }
+            }
+        }
+        val error = result.exceptionOrNull() ?: return null
+        val message = when (error) {
+            is android.content.ActivityNotFoundException -> "No app can open this"
+            is SecurityException -> "The app doesn't let other apps open this"
+            else -> error.message ?: "Could not run it"
+        }
+        Effects.toast(context, message)
+        return message
     }
 
     @Suppress("unused")

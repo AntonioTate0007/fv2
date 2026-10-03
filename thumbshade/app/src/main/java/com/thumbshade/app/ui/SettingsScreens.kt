@@ -1,5 +1,17 @@
 package com.thumbshade.app.ui
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import com.thumbshade.app.overlay.AnimatedIconView
+import com.thumbshade.app.data.AnimatedIcon
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -45,7 +57,6 @@ import com.thumbshade.app.data.GestureAction
 import com.thumbshade.app.data.GestureMode
 import com.thumbshade.app.data.GestureType
 import com.thumbshade.app.data.AppBehavior
-import com.thumbshade.app.data.ButtonAnim
 import com.thumbshade.app.data.CardBg
 import com.thumbshade.app.data.CardStyle
 import com.thumbshade.app.data.HeaderIcon
@@ -214,11 +225,19 @@ fun ButtonScreen() {
     }
 
     Section("Animations") {
-        ChoiceRow("Appear and hide animation", ButtonAnim.entries, s.appearAnim, { it.label }) { v -> edit { it.copy(appearAnim = v) } }
+        ChoiceRow("Appear and hide animation", ShadeAnim.entries, s.appearAnim, { it.label }) { v -> edit { it.copy(appearAnim = v) } }
         OutlinedButton(onClick = { OverlayService.instance?.replayAppear() }) { Text("Try it") }
         ChoiceRow("New notification animation", NotifAnim.entries, s.newNotifAnim, { it.label }) { v -> edit { it.copy(newNotifAnim = v) } }
         SliderRow("Intensity", s.newNotifIntensity.toFloat(), 10f..100f, format = { "${it.roundToInt()}%" }) { v -> edit { it.copy(newNotifIntensity = v.roundToInt()) } }
         OutlinedButton(onClick = { OverlayService.instance?.testPulse() }) { Text("Try it") }
+    }
+
+    Section("Animated icon") {
+        Hint("Animations play on the button itself. Battery and clock animations show the real battery level and time.")
+        AnimatedIconRow(s)
+        if (s.animatedIcon != AnimatedIcon.NONE) {
+            AutoColorRow("Animation colour", s.animatedIconColor) { v -> edit { it.copy(animatedIconColor = v) } }
+        }
     }
 
     Section("Button appearance") {
@@ -336,8 +355,13 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
     var choosing by remember { mutableStateOf(false) }
     var pickApp by remember { mutableStateOf(false) }
     var pickText by remember { mutableStateOf(false) }
+    var pickScreenApp by remember { mutableStateOf(false) }
+    var screenApp by remember { mutableStateOf<String?>(null) }
+    var pickShortcut by remember { mutableStateOf(false) }
+    var editIntent by remember { mutableStateOf(false) }
     val label = when (action.type) {
         GestureType.OPEN_APP -> "Open " + AppInfoCache.label(context, action.arg)
+        GestureType.APP_SCREEN, GestureType.SHORTCUT, GestureType.CUSTOM_INTENT -> action.label.ifBlank { action.type.label }
         GestureType.PASTE_TEXT -> "Paste \"" + action.arg.take(20) + "\""
         else -> action.type.label
     }
@@ -367,6 +391,9 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
                                     when (t) {
                                         GestureType.OPEN_APP -> pickApp = true
                                         GestureType.PASTE_TEXT -> pickText = true
+                                        GestureType.APP_SCREEN -> pickScreenApp = true
+                                        GestureType.SHORTCUT -> pickShortcut = true
+                                        GestureType.CUSTOM_INTENT -> editIntent = true
                                         else -> onChange(GestureAction(t))
                                     }
                                 }
@@ -383,6 +410,30 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
         AppPickerDialog("Open which app?", emptySet(), single = true, onDismiss = { pickApp = false }) { chosen ->
             pickApp = false
             chosen.firstOrNull()?.let { onChange(GestureAction(GestureType.OPEN_APP, it)) }
+        }
+    }
+    if (pickScreenApp) {
+        AppPickerDialog("Which app's screen?", emptySet(), single = true, onDismiss = { pickScreenApp = false }) { chosen ->
+            pickScreenApp = false
+            screenApp = chosen.firstOrNull()
+        }
+    }
+    screenApp?.let { pkg ->
+        AppScreenPicker(pkg, onDismiss = { screenApp = null }) { a ->
+            screenApp = null
+            onChange(a)
+        }
+    }
+    if (pickShortcut) {
+        ShortcutPicker(onDismiss = { pickShortcut = false }) { a ->
+            pickShortcut = false
+            onChange(a)
+        }
+    }
+    if (editIntent) {
+        CustomIntentDialog(action, onDismiss = { editIntent = false }) { a ->
+            editIntent = false
+            onChange(a)
         }
     }
     if (pickText) {
@@ -422,10 +473,32 @@ fun ShadeSettingsScreen() {
         ChoiceRow("Position", ShadeAlign.entries, s.shadeAlign, { it.label }) { v -> edit { it.copy(shadeAlign = v) } }
         SwitchRow("Newest at the bottom", s.newestAtBottom, "Closest to your thumb") { v -> edit { it.copy(newestAtBottom = v) } }
         SliderRow("Space between notifications", s.rowSpacingDp.toFloat(), 0f..32f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(rowSpacingDp = v.roundToInt()) } }
-        SliderRow("Background dim", s.dimBehind, 0f..0.9f, format = { "${(it * 100).roundToInt()}%" }) { v -> edit { it.copy(dimBehind = v) } }
-        ChoiceRow("Browsing style", BrowseStyle.entries, s.browseStyle, { it.label }) { v -> edit { it.copy(browseStyle = v) } }
+        ChoiceRow("Background overlay", com.thumbshade.app.data.ShadeOverlay.entries, s.shadeOverlay, { it.label }) { v -> edit { it.copy(shadeOverlay = v) } }
+        if (s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM || s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR) {
+            SliderRow("Dim amount", s.dimBehind, 0f..0.9f, format = { "${(it * 100).roundToInt()}%" }) { v -> edit { it.copy(dimBehind = v) } }
+        }
+        if (s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.BLUR || s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR) {
+            SliderRow("Blur strength", s.blurRadiusDp.toFloat(), 4f..80f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(blurRadiusDp = v.roundToInt()) } }
+            if (android.os.Build.VERSION.SDK_INT < 31) Hint("Blur needs Android 12 or newer.")
+        }
+        SwitchRow("Remember scroll position", s.rememberScroll, "When reopening the shade, return to where you were") { v -> edit { it.copy(rememberScroll = v) } }
+        ChoiceRow("Browsing mode", BrowseStyle.entries, s.browseStyle, { it.label }) { v -> edit { it.copy(browseStyle = v) } }
         ChoiceRow("Open and close animation", ShadeAnim.entries, s.shadeAnim, { it.label }) { v -> edit { it.copy(shadeAnim = v) } }
+        SwitchRow(
+            "Push/pull to close", s.pushPullClose,
+            "At the bottom of the list pull up past the edge to close; at the top, pull down. The shade follows your finger with a rubber-band feel.",
+        ) { v -> edit { it.copy(pushPullClose = v) } }
+        SwitchRow(
+            "Wrap-around scrolling", s.wrapAround && !s.pushPullClose,
+            if (s.pushPullClose) "Only available while Push/pull to close is off" else "Pull past the last notification to jump back to the first, and the other way round",
+        ) { v -> if (!s.pushPullClose) edit { it.copy(wrapAround = v) } }
+        if (s.pushPullClose || s.wrapAround) {
+            SliderRow("Pull distance", s.pullCloseDp.toFloat(), 40f..240f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(pullCloseDp = v.roundToInt()) } }
+        }
         SwitchRow("Swipe to dismiss", s.swipeToDismiss) { v -> edit { it.copy(swipeToDismiss = v) } }
+        if (s.swipeToDismiss) {
+            SliderRow("Swipe distance to dismiss", s.swipeDismissFraction, 0.15f..0.8f, format = { "${(it * 100).roundToInt()}% of the width" }) { v -> edit { it.copy(swipeDismissFraction = v) } }
+        }
         SwitchRow("Close after opening a notification", s.closeAfterOpen) { v -> edit { it.copy(closeAfterOpen = v) } }
         SwitchRow("Close when it's empty", s.closeWhenEmpty) { v -> edit { it.copy(closeWhenEmpty = v) } }
     }
@@ -437,6 +510,7 @@ fun ShadeSettingsScreen() {
         ChoiceRow("Screen border effect", EdgeStyle.entries.filterNot { it.aroundButton }, s.edgeStyle, { it.label }) { v -> edit { it.copy(edgeStyle = v) } }
         val fxOptions: List<EdgeStyle?> = listOf<EdgeStyle?>(null) + EdgeStyle.entries.filter { it.aroundButton }
         ChoiceRow("Button effect", fxOptions, s.buttonEffect, { it?.label ?: "None" }) { v -> edit { it.copy(buttonEffect = v) } }
+        Hint("The border and button effects play together; the button effect follows the button's shape.")
         ChoiceRow("Colour", EdgeColorMode.entries, s.edgeColorMode, { it.label }) { v -> edit { it.copy(edgeColorMode = v) } }
         if (s.edgeColorMode == EdgeColorMode.CUSTOM) ColorRow("Custom colour", s.edgeCustomColor) { c -> edit { it.copy(edgeCustomColor = c) } }
         SliderRow("Duration", s.edgeDurationMs / 1000f, 1f..10f, format = { "%.1f s".format(it) }) { v -> edit { it.copy(edgeDurationMs = (v * 1000).roundToInt()) } }
@@ -482,6 +556,10 @@ private fun NotificationCardSections(s: AppSettings) {
         AutoColorRow("Fallback colour when the app sets none", c.fallbackColor) { v -> editCard { it.copy(fallbackColor = v) } }
     }
 
+    Section("Apps' own layouts") {
+        SwitchRow("Show apps' custom layouts", c.appLayouts, "Weather, sports, timers and other notifications that draw their own design are shown as the app made them") { v -> editCard { it.copy(appLayouts = v) } }
+    }
+
     Section("Header") {
         ChoiceRow("Header icon", HeaderIcon.entries, c.headerIcon, { it.label }) { v -> editCard { it.copy(headerIcon = v) } }
         if (c.headerIcon != HeaderIcon.NONE) {
@@ -490,6 +568,7 @@ private fun NotificationCardSections(s: AppSettings) {
         if (c.headerIcon == HeaderIcon.SENDER) {
             SwitchRow("Show app icon badge", c.appBadge, "A small app icon on the sender's picture") { v -> editCard { it.copy(appBadge = v) } }
         }
+        SwitchRow("Snooze and menu buttons in the header", c.headerButtons) { v -> editCard { it.copy(headerButtons = v) } }
         SwitchRow("Show app name", c.showAppName) { v -> editCard { it.copy(showAppName = v) } }
         if (c.showAppName) {
             TextStyleRows("App name", c.appNameSp, c.appNameBold, c.appNameColor, 8f..22f,
@@ -562,5 +641,57 @@ private fun NotificationCardSections(s: AppSettings) {
             SliderRow("Button padding", c.buttonPaddingDp.toFloat(), 2f..16f, format = ::dpLabel) { v -> editCard { it.copy(buttonPaddingDp = v.roundToInt()) } }
         }
         AutoColorRow("Progress bar colour", c.progressColor) { v -> editCard { it.copy(progressColor = v) } }
+    }
+}
+
+@Composable
+private fun AnimatedIconRow(s: AppSettings) {
+    var open by remember { mutableStateOf(false) }
+    val accent = Color(currentAccent(LocalContext.current, s))
+    val color = if (s.animatedIconColor != 0L) Color(s.animatedIconColor) else accent
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { open = true }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Animation", Modifier.weight(1f))
+        Text(s.animatedIcon.label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text("Animated icon") },
+            text = {
+                LazyVerticalGrid(GridCells.Fixed(3), Modifier.heightIn(max = 460.dp)) {
+                    items(AnimatedIcon.entries) { icon ->
+                        Column(
+                            Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    edit { it.copy(animatedIcon = icon) }
+                                    open = false
+                                }
+                                .padding(6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF15181C))
+                                    .then(if (icon == s.animatedIcon) Modifier.border(2.dp, color, CircleShape) else Modifier),
+                            ) {
+                                AnimatedIconView(icon, color, Modifier.fillMaxSize())
+                            }
+                            Text(icon.label, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
+        )
     }
 }

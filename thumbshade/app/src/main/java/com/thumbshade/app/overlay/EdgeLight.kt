@@ -100,7 +100,7 @@ object EdgeLight {
                 durationMs = durationMs,
                 thicknessDp = thicknessDp,
                 buttonCenter = center?.let { Offset(it.first.toFloat(), it.second.toFloat()) },
-                buttonRadius = size?.let { maxOf(it.first, it.second) / 2f } ?: 0f,
+                buttonHalf = size?.let { Offset(it.first / 2f, it.second / 2f) } ?: Offset.Zero,
             )
         }
         runCatching { wm.addView(view, params) }.onFailure { o.destroy(); return }
@@ -126,7 +126,7 @@ private fun EdgeCanvas(
     durationMs: Long,
     thicknessDp: Int,
     buttonCenter: Offset?,
-    buttonRadius: Float,
+    buttonHalf: Offset,
 ) {
     val infinite = rememberInfiniteTransition(label = "edge")
     val phase by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart), label = "phase")
@@ -151,7 +151,7 @@ private fun EdgeCanvas(
         val stroke = thicknessDp.dp.toPx()
         val corner = 36.dp.toPx()
         if (border != null) drawBorder(border, color, envelope, phase, stroke, corner, flicker)
-        if (buttonFx != null && buttonCenter != null) drawButtonFx(buttonFx, color, envelope, phase, buttonCenter, buttonRadius)
+        if (buttonFx != null && buttonCenter != null) drawButtonFx(buttonFx, color, envelope, phase, buttonCenter, buttonHalf)
     }
 }
 
@@ -217,25 +217,245 @@ private fun DrawScope.drawBorder(style: EdgeStyle, color: Color, env: Float, pha
                 }
             }
         }
+        EdgeStyle.ECHO -> for (i in 0 until 3) {
+            // Copies of the border that drift inwards and fade.
+            val p = (phase + i / 3f) % 1f
+            val inset = stroke / 2 + p * 48.dp.toPx()
+            drawPath(borderPath(inset, (corner - inset / 2).coerceAtLeast(0f)), color.copy(alpha = env * (1f - p)), style = Stroke(stroke * (1f - p * 0.6f)))
+        }
+        EdgeStyle.LIGHTNING -> {
+            // A jagged bolt along each side that re-strikes a few times a second.
+            val strike = (phase * 5).toInt()
+            val r = Random(strike * 31 + 7)
+            val flash = 1f - (phase * 5 % 1f)
+            drawPath(path, color.copy(alpha = env * 0.25f), style = Stroke(stroke))
+            fun bolt(x0: Float, y0: Float, x1: Float, y1: Float, horizontal: Boolean) {
+                val bp = Path().apply { moveTo(x0, y0) }
+                val n = 14
+                for (k in 1..n) {
+                    val f = k / n.toFloat()
+                    val jitter = (r.nextFloat() - 0.5f) * stroke * 4
+                    val x = x0 + (x1 - x0) * f + if (horizontal) 0f else jitter
+                    val y = y0 + (y1 - y0) * f + if (horizontal) jitter else 0f
+                    bp.lineTo(x, y)
+                }
+                drawPath(bp, color.copy(alpha = env * flash * 0.5f), style = Stroke(stroke * 2.2f))
+                drawPath(bp, Color.White.copy(alpha = env * flash), style = Stroke(stroke * 0.5f))
+            }
+            val e = stroke * 1.5f
+            bolt(e, 0f, e, size.height, false)
+            bolt(size.width - e, 0f, size.width - e, size.height, false)
+            if (r.nextBoolean()) bolt(0f, e, size.width, e, true) else bolt(0f, size.height - e, size.width, size.height - e, true)
+        }
+        EdgeStyle.RISE -> {
+            // Light climbs both sides from the bottom, then the whole frame glows.
+            val level = (phase * 1.4f).coerceAtMost(1f)
+            val top = size.height * (1f - level)
+            drawLine(color.copy(alpha = env), Offset(stroke / 2, size.height), Offset(stroke / 2, top), stroke)
+            drawLine(color.copy(alpha = env), Offset(size.width - stroke / 2, size.height), Offset(size.width - stroke / 2, top), stroke)
+            drawLine(color.copy(alpha = env), Offset(0f, size.height - stroke / 2), Offset(size.width, size.height - stroke / 2), stroke)
+            if (level >= 1f) drawPath(path, color.copy(alpha = env * (1f - (phase * 1.4f - 1f) / 0.4f).coerceIn(0f, 1f)), style = Stroke(stroke))
+            drawRect(Brush.verticalGradient(listOf(Color.Transparent, color.copy(alpha = env * 0.25f)), startY = top, endY = size.height), topLeft = Offset(0f, top), size = androidx.compose.ui.geometry.Size(stroke * 4, size.height - top))
+            drawRect(Brush.verticalGradient(listOf(Color.Transparent, color.copy(alpha = env * 0.25f)), startY = top, endY = size.height), topLeft = Offset(size.width - stroke * 4, top), size = androidx.compose.ui.geometry.Size(stroke * 4, size.height - top))
+        }
+        EdgeStyle.DRIP -> {
+            // The top edge glows and drops run down the sides.
+            drawPath(path, color.copy(alpha = env * 0.6f), style = Stroke(stroke))
+            val r = Random(11)
+            repeat(10) { k ->
+                val left = k % 2 == 0
+                val speed = 0.6f + r.nextFloat() * 0.8f
+                val offset = r.nextFloat()
+                val p = (phase * speed + offset) % 1f
+                val x = if (left) stroke * (1.5f + r.nextFloat()) else size.width - stroke * (1.5f + r.nextFloat())
+                val y = corner + p * (size.height - 2 * corner)
+                val drop = stroke * (1.2f + r.nextFloat())
+                drawLine(color.copy(alpha = env * (1f - p) * 0.6f), Offset(x, y - drop * 5), Offset(x, y), drop * 0.6f, cap = StrokeCap.Round)
+                drawCircle(color.copy(alpha = env * (1f - p)), radius = drop, center = Offset(x, y))
+            }
+        }
+        EdgeStyle.CONVERGE -> {
+            // Two beams start at the bottom centre, run round both sides and meet at the top.
+            val measure = PathMeasure()
+            val loop = Path().apply {
+                // Start at bottom centre, clockwise round to the top centre.
+                moveTo(size.width / 2, size.height - stroke / 2)
+                lineTo(stroke / 2, size.height - stroke / 2)
+                lineTo(stroke / 2, stroke / 2)
+                lineTo(size.width / 2, stroke / 2)
+            }
+            val mirror = Path().apply {
+                moveTo(size.width / 2, size.height - stroke / 2)
+                lineTo(size.width - stroke / 2, size.height - stroke / 2)
+                lineTo(size.width - stroke / 2, stroke / 2)
+                lineTo(size.width / 2, stroke / 2)
+            }
+            val grow = (phase * 1.25f).coerceAtMost(1f)
+            for (pp in listOf(loop, mirror)) {
+                measure.setPath(pp, false)
+                val seg = Path()
+                measure.getSegment(0f, measure.length * grow, seg, true)
+                drawPath(seg, color.copy(alpha = env), style = Stroke(stroke, cap = StrokeCap.Round))
+            }
+            if (grow >= 1f) {
+                val flash = 1f - (phase * 1.25f - 1f) / 0.25f
+                drawCircle(color.copy(alpha = env * flash.coerceIn(0f, 1f) * 0.6f), radius = 40.dp.toPx(), center = Offset(size.width / 2, 0f))
+            }
+        }
         else -> drawPath(path, color.copy(alpha = env), style = Stroke(stroke))
     }
 }
 
-private fun DrawScope.drawButtonFx(style: EdgeStyle, color: Color, env: Float, phase: Float, c: Offset, r: Float) {
+/** The button's outline grown by [grow]: a pill or circle, following the button's shape. */
+private fun shapePath(c: Offset, half: Offset, grow: Float): Path {
+    val hw = half.x + grow
+    val hh = half.y + grow
+    val r = minOf(hw, hh)
+    return Path().apply { addRoundRect(RoundRect(c.x - hw, c.y - hh, c.x + hw, c.y + hh, CornerRadius(r, r))) }
+}
+
+private fun DrawScope.drawButtonFx(style: EdgeStyle, color: Color, env: Float, phase: Float, c: Offset, half: Offset) {
+    val r = maxOf(half.x, half.y, 1f)
     val reach = 3.2f * r
     when (style) {
         EdgeStyle.RIPPLE -> for (i in 0 until 3) {
             val p = (phase + i / 3f) % 1f
-            drawCircle(color.copy(alpha = env * (1f - p)), radius = r + p * reach, center = c, style = Stroke(6f * (1f - p) + 2f))
+            drawPath(shapePath(c, half, p * reach), color.copy(alpha = env * (1f - p)), style = Stroke(6f * (1f - p) + 2f))
         }
         EdgeStyle.SONAR -> {
             val p = phase
-            drawCircle(color.copy(alpha = env * 0.35f * (1f - p)), radius = r + p * reach, center = c)
-            drawCircle(color.copy(alpha = env * (1f - p)), radius = r + p * reach, center = c, style = Stroke(4f))
+            drawPath(shapePath(c, half, p * reach), color.copy(alpha = env * 0.35f * (1f - p)))
+            drawPath(shapePath(c, half, p * reach), color.copy(alpha = env * (1f - p)), style = Stroke(4f))
         }
         EdgeStyle.HALO -> {
             val breathe = 0.5f + 0.5f * sin(phase * 2 * PI).toFloat()
-            for (i in 5 downTo 1) drawCircle(color.copy(alpha = env * breathe * 0.12f * (6 - i)), radius = r + i * 8f, center = c)
+            for (i in 5 downTo 1) drawPath(shapePath(c, half, i * 8f), color.copy(alpha = env * breathe * 0.12f * (6 - i)))
+        }
+        EdgeStyle.PULSE_RINGS -> for (i in 0 until 4) {
+            // Evenly spaced solid rings beating outward together.
+            val beat = 0.5f + 0.5f * sin((phase * 2 - i * 0.15f) * 2 * PI).toFloat()
+            drawPath(shapePath(c, half, 10f + i * r * 0.45f + beat * 6f), color.copy(alpha = env * beat * (1f - i / 4f)), style = Stroke(5f))
+        }
+        EdgeStyle.WAVE -> {
+            // A wobbling outline whose bumps travel round the button.
+            for (ring in 0 until 2) {
+                val base = r + 14f + ring * 18f
+                val wave = Path()
+                val n = 96
+                for (k in 0..n) {
+                    val a = k / n.toFloat() * 2 * PI
+                    val rr = base + 7f * sin(a * 6 + phase * 2 * PI * (if (ring == 0) 1 else -1)).toFloat()
+                    val x = c.x + (rr * kotlin.math.cos(a)).toFloat() * (half.x + 14f) / r
+                    val y = c.y + (rr * sin(a)).toFloat() * (half.y + 14f) / r
+                    if (k == 0) wave.moveTo(x, y) else wave.lineTo(x, y)
+                }
+                drawPath(wave, color.copy(alpha = env * (0.9f - ring * 0.4f)), style = Stroke(4f))
+            }
+        }
+        EdgeStyle.BUBBLES -> {
+            val rnd = Random(3)
+            repeat(16) {
+                val speed = 0.5f + rnd.nextFloat()
+                val p = (phase * speed + rnd.nextFloat()) % 1f
+                val x = c.x + (rnd.nextFloat() - 0.5f) * half.x * 2.4f + 10f * sin((p * 4 + it) * PI).toFloat()
+                val y = c.y - half.y - p * reach * 1.4f
+                val br = 4f + rnd.nextFloat() * 10f
+                drawCircle(color.copy(alpha = env * (1f - p)), radius = br, center = Offset(x, y), style = Stroke(2.5f))
+                drawCircle(Color.White.copy(alpha = env * (1f - p) * 0.6f), radius = br * 0.25f, center = Offset(x - br * 0.35f, y - br * 0.35f))
+            }
+        }
+        EdgeStyle.FIREWORKS -> {
+            // Three bursts, staggered, each a ring of sparks that falls slightly as it fades.
+            for (b in 0 until 3) {
+                val p = (phase * 1.5f + b / 3f) % 1f
+                val rnd = Random(b * 17 + 5)
+                val bc = Offset(c.x + (rnd.nextFloat() - 0.5f) * reach, c.y - r - rnd.nextFloat() * reach)
+                val hue = (rnd.nextFloat() * 360f)
+                val spark = if (b == 0) color else Color.hsv(hue, 0.8f, 1f)
+                repeat(14) { k ->
+                    val a = k / 14f * 2 * PI
+                    val dist = p * r * 2.2f
+                    val pt = Offset(bc.x + (dist * kotlin.math.cos(a)).toFloat(), bc.y + (dist * sin(a)).toFloat() + p * p * r)
+                    drawCircle(spark.copy(alpha = env * (1f - p)), radius = 3.5f * (1f - p) + 1f, center = pt)
+                }
+            }
+        }
+        EdgeStyle.ECLIPSE -> {
+            // A dark disc slides across a glowing corona.
+            val corona = 0.7f + 0.3f * sin(phase * 4 * PI).toFloat()
+            for (i in 6 downTo 1) drawPath(shapePath(c, half, i * 6f), color.copy(alpha = env * corona * 0.1f * (7 - i)))
+            val shift = (phase * 2f - 1f) * r * 0.5f
+            drawPath(shapePath(Offset(c.x + shift, c.y), half, 2f), Color.Black.copy(alpha = env * 0.85f))
+            drawPath(shapePath(c, half, 4f), color.copy(alpha = env), style = Stroke(3f))
+        }
+        EdgeStyle.SPOTLIGHT -> {
+            // The rest of the screen dims; a soft light falls on the button.
+            val glow = 0.8f + 0.2f * sin(phase * 2 * PI).toFloat()
+            drawRect(Brush.radialGradient(
+                0f to Color.Transparent,
+                0.35f to color.copy(alpha = env * 0.15f * glow),
+                1f to Color.Black.copy(alpha = env * 0.55f),
+                center = c,
+                radius = reach * 1.6f,
+            ))
+            drawPath(shapePath(c, half, 6f), color.copy(alpha = env * glow), style = Stroke(4f))
+        }
+        EdgeStyle.SPARKLE -> {
+            val rnd = Random(9)
+            repeat(18) {
+                val a = rnd.nextFloat() * 2 * PI
+                val d = r + 8f + rnd.nextFloat() * reach * 0.7f
+                val tw = sin((phase * 2 + rnd.nextFloat()) * 2 * PI).toFloat().coerceAtLeast(0f)
+                val pt = Offset(c.x + (d * kotlin.math.cos(a)).toFloat(), c.y + (d * sin(a)).toFloat())
+                val len = 4f + 8f * tw
+                val col = (if (it % 3 == 0) Color.White else color).copy(alpha = env * tw)
+                drawLine(col, Offset(pt.x - len, pt.y), Offset(pt.x + len, pt.y), 2.5f, cap = StrokeCap.Round)
+                drawLine(col, Offset(pt.x, pt.y - len), Offset(pt.x, pt.y + len), 2.5f, cap = StrokeCap.Round)
+            }
+        }
+        EdgeStyle.CHARGE -> {
+            // A ring fills like a charging meter, then flashes.
+            val fill = (phase * 1.3f).coerceAtMost(1f)
+            val ring = shapePath(c, half, 10f)
+            drawPath(ring, color.copy(alpha = env * 0.2f), style = Stroke(7f))
+            val m = PathMeasure()
+            m.setPath(ring, false)
+            val seg = Path()
+            m.getSegment(0f, m.length * fill, seg, true)
+            drawPath(seg, color.copy(alpha = env), style = Stroke(7f, cap = StrokeCap.Round))
+            if (fill >= 1f) drawPath(shapePath(c, half, 10f), color.copy(alpha = env * 0.35f * (1f - (phase * 1.3f - 1f) / 0.3f).coerceIn(0f, 1f)))
+        }
+        EdgeStyle.VORTEX -> {
+            // Spiral arms that spin around the button.
+            for (arm in 0 until 4) {
+                val sp = Path()
+                val n = 40
+                for (k in 0..n) {
+                    val f = k / n.toFloat()
+                    val a = arm * PI / 2 + phase * 2 * PI + f * 2.4 * PI
+                    val d = r + 6f + f * reach * 0.8f
+                    val pt = Offset(c.x + (d * kotlin.math.cos(a)).toFloat(), c.y + (d * sin(a)).toFloat())
+                    if (k == 0) sp.moveTo(pt.x, pt.y) else sp.lineTo(pt.x, pt.y)
+                }
+                drawPath(sp, Brush.radialGradient(listOf(color.copy(alpha = env), Color.Transparent), center = c, radius = r + reach * 0.8f), style = Stroke(5f, cap = StrokeCap.Round))
+            }
+        }
+        EdgeStyle.CONFETTI -> {
+            val rnd = Random(21)
+            repeat(26) {
+                val speed = 0.6f + rnd.nextFloat() * 0.8f
+                val p = (phase * speed + rnd.nextFloat()) % 1f
+                val a = (rnd.nextFloat() - 0.5f) * PI * 1.2 - PI / 2
+                val v = reach * (0.6f + rnd.nextFloat() * 0.6f)
+                val x = c.x + (v * p * kotlin.math.cos(a)).toFloat()
+                val y = c.y + (v * p * sin(a)).toFloat() + p * p * reach * 1.2f
+                val col = if (it % 4 == 0) color else Color.hsv(rnd.nextFloat() * 360f, 0.75f, 1f)
+                val w = 6f + rnd.nextFloat() * 6f
+                val tilt = p * 6f + it
+                val dx = w * kotlin.math.cos(tilt)
+                val dy = w * 0.5f * sin(tilt.toDouble()).toFloat()
+                drawLine(col.copy(alpha = env * (1f - p * 0.7f)), Offset(x - dx, y - dy), Offset(x + dx, y + dy), 5f)
+            }
         }
         else -> Unit
     }

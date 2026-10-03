@@ -445,9 +445,9 @@ private fun ActionEditor(a: RuleAction, onChange: (RuleAction) -> Unit, onDelete
         ActionType.EDGE_LIGHT -> {
             ChoiceRow(
                 "Effect",
-                EdgeStyle.entries.filterNot { it.aroundButton }.map { it.name },
+                EdgeStyle.entries.map { it.name },
                 a.edgeStyle,
-                { n -> EdgeStyle.entries.firstOrNull { it.name == n }?.label ?: n },
+                { n -> EdgeStyle.entries.firstOrNull { it.name == n }?.let { if (it.aroundButton) "${it.label} (around the button)" else it.label } ?: n },
             ) { onChange(a.copy(edgeStyle = it)) }
             ColorRow("Colour", a.color) { onChange(a.copy(color = it)) }
         }
