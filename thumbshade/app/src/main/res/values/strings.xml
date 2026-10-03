@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">ThumbShade</string>
+    <string name="open_shade">Open shade</string>
+    <string name="tile_label">Release held</string>
+    <string name="widget_count">Notification count</string>
+    <string name="widget_strip">Notification icons</string>
+    <string name="widget_list">Notification list</string>
+    <string name="widget_empty">No notifications</string>
+    <string name="accessibility_description">Optional. Lets ThumbShade move the button out of the way of the keyboard, behave differently in apps you choose, perform Back, Home and Recents from button gestures, paste your saved texts, and press notification buttons from rules. It only checks which app is in front, whether the keyboard is showing and which field has focus. It never reads, records or sends what is on your screen.</string>
+</resources>
