@@ -169,7 +169,7 @@ data class ShadeItem(
                 people = people,
                 channelId = channelId,
                 silent = importance <= 2,
-                senderIcon = (if (Build.VERSION.SDK_INT >= 30) extras.get(Notification.EXTRA_CONVERSATION_ICON) as? Icon else null)
+                senderIcon = (if (Build.VERSION.SDK_INT >= 30) extras.get("android.conversationIcon") as? Icon else null)
                     ?: lastSenderIcon
                     ?: if (isMessaging) n.getLargeIcon() else null,
                 sbn = sbn,
