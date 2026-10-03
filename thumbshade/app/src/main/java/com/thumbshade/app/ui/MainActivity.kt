@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Rule
@@ -100,6 +101,7 @@ private enum class AppTab(val label: String, val icon: ImageVector) {
     NOTIFICATIONS("Notifications", Icons.Filled.Notifications),
     BUTTON("Button", Icons.Filled.RadioButtonChecked),
     SHADE("Shade", Icons.Filled.ViewDay),
+    SMART("Smart", Icons.Filled.AutoAwesome),
     RULES("Rules", Icons.Filled.Rule),
 }
 
@@ -159,6 +161,7 @@ private fun AppRoot(pendingRulePkg: String?, onRulePkgConsumed: () -> Unit) {
                     AppTab.NOTIFICATIONS -> NotificationsScreen()
                     AppTab.BUTTON -> ButtonScreen()
                     AppTab.SHADE -> ShadeSettingsScreen()
+                    AppTab.SMART -> SmartScreen()
                     AppTab.RULES -> Unit
                 }
             }

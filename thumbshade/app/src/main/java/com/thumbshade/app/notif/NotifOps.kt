@@ -32,6 +32,7 @@ object NotifOps {
     }
 
     fun open(context: Context, item: ShadeItem): Boolean {
+        com.thumbshade.app.ai.AiHub.record(item, com.thumbshade.app.ai.Engagement.Event.OPENED)
         val ok = send(context, item.contentIntent)
         if (!ok) {
             // No content intent: open the app instead.
@@ -39,17 +40,24 @@ object NotifOps {
                 runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
         }
-        if ((item.sbn.notification.flags and android.app.Notification.FLAG_AUTO_CANCEL) != 0) dismiss(item)
+        if ((item.sbn.notification.flags and android.app.Notification.FLAG_AUTO_CANCEL) != 0) dismiss(item, learn = false)
         return ok
     }
 
-    fun dismiss(item: ShadeItem) {
-        if (item.clearable) ShadeListenerService.cancel(item.key)
+    /** [learn]: count it as "you swiped this away" (not for clear-all or auto-cancel). */
+    fun dismiss(item: ShadeItem, learn: Boolean = true) {
+        if (!item.clearable) return
+        if (learn) com.thumbshade.app.ai.AiHub.record(item, com.thumbshade.app.ai.Engagement.Event.DISMISSED)
+        ShadeListenerService.cancel(item.key)
     }
 
-    fun press(context: Context, action: NAction): Boolean = send(context, action.intent)
+    fun press(context: Context, action: NAction, item: ShadeItem? = null): Boolean {
+        item?.let { com.thumbshade.app.ai.AiHub.record(it, com.thumbshade.app.ai.Engagement.Event.ACTION) }
+        return send(context, action.intent)
+    }
 
-    fun reply(context: Context, action: NAction, text: String): Boolean {
+    fun reply(context: Context, action: NAction, text: String, item: ShadeItem? = null): Boolean {
+        item?.let { com.thumbshade.app.ai.AiHub.record(it, com.thumbshade.app.ai.Engagement.Event.REPLIED) }
         val pi = action.intent ?: return false
         val inputs = action.remoteInputs.toTypedArray()
         if (inputs.isEmpty()) return false

@@ -26,6 +26,7 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version = "4.13.2" }
+mlkit-genai-summarization = { group = "com.google.mlkit", name = "genai-summarization", version = "1.0.0-beta1" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

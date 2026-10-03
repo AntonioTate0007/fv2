@@ -58,6 +58,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -173,7 +174,7 @@ fun ShadeScreen(
         val all by NotificationRepo.items.collectAsState()
         val media by MediaHub.state.collectAsState()
         val held by HoldStore.held.collectAsState()
-        val entries = remember(all, s) { ShadeFilter.entries(all, s) }
+        val entries = remember(all, s) { ShadeFilter.entries(all, s) { com.thumbshade.app.ai.AiHub.priority(it) } }
         val dims = s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM || s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR
         val dimTarget = when {
             lockScreen -> s.lockDim
@@ -232,6 +233,8 @@ private fun ShadePanel(
     val density = LocalDensity.current
 
     var restored by remember { mutableStateOf(false) }
+    // Low-priority rows the user expanded from their compact form.
+    var expanded by remember { mutableStateOf(setOf<String>()) }
     LaunchedEffect(entries.size) {
         if (entries.isEmpty()) return@LaunchedEffect
         if (!restored && s.rememberScroll && ShadeMemory.index >= 0) {
@@ -324,8 +327,8 @@ private fun ShadePanel(
                 IconButton(onClick = {
                     entries.forEach { e ->
                         when (e) {
-                            is ShadeFilter.Single -> NotifOps.dismiss(e.item)
-                            is ShadeFilter.Group -> e.items.forEach(NotifOps::dismiss)
+                            is ShadeFilter.Single -> NotifOps.dismiss(e.item, learn = false)
+                            is ShadeFilter.Group -> e.items.forEach { NotifOps.dismiss(it, learn = false) }
                         }
                     }
                 }) { Icon(Icons.Filled.ClearAll, "Clear all", tint = MaterialTheme.colorScheme.onSurface) }
@@ -354,7 +357,11 @@ private fun ShadePanel(
                 } else 0f
                 Box(Modifier.zIndex(z).browse(listState, entry.id, s.browseStyle)) {
                     when (entry) {
-                        is ShadeFilter.Single -> NotificationCard(entry.item, s, onClose)
+                        is ShadeFilter.Single -> if (s.ai.minimizeLow && entry.item.key !in expanded &&
+                            remember(entry.item.key, entry.item.postTime) { com.thumbshade.app.ai.AiHub.urgency(entry.item) } == com.thumbshade.app.ai.Urgency.LOW
+                        ) {
+                            CompactCard(entry.item, s, onClose) { expanded = expanded + entry.item.key }
+                        } else NotificationCard(entry.item, s, onClose)
                         is ShadeFilter.Group -> GroupCard(entry, s, onClose)
                     }
                 }
@@ -507,6 +514,42 @@ private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, on
         .combinedClickable(onClick = onClick, onLongClick = onLongClick)
 }
 
+/** A low-priority notification minimized to one line; long-press shows it in full. */
+@Composable
+private fun CompactCard(item: ShadeItem, s: AppSettings, onClose: () -> Unit, onExpand: () -> Unit) {
+    val context = LocalContext.current
+    Row(
+        Modifier
+            .card(
+                s, accentFor(item, s, MaterialTheme.colorScheme.primary),
+                onClick = {
+                    NotifOps.open(context, item)
+                    if (s.closeAfterOpen) onClose()
+                },
+                onLongClick = onExpand,
+            )
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(item.pkg, Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            item.appName + " · " + item.title.ifBlank { item.displayText },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (item.clearable) {
+            Icon(
+                Icons.Filled.Close, "Dismiss", tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(28.dp).clip(CircleShape).clickable { NotifOps.dismiss(item) }.padding(5.dp),
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NotificationCard(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
@@ -615,6 +658,7 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                     maxLines = 1,
                 )
             }
+            if (s.ai.showBadges) UrgencyBadge(remember(item.key, item.postTime) { com.thumbshade.app.ai.AiHub.urgency(item) })
             if (c.showSubtitle && c.subtitleInHeader && item.subText.isNotBlank()) {
                 Text(
                     (if (c.showAppName) " · " else "") + item.subText,
@@ -664,6 +708,7 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
             else -> item.largeIcon
         }
         val hidden = LocalLockScreen.current && s.lockHideContent
+        if (!hidden) ConversationSummary(item, accent)
         val custom = item.customView.takeIf { c.appLayouts }
         if (hidden) {
             Text(
@@ -777,7 +822,7 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                             }
                             if (lockScreen && !s.replyOnLock) com.thumbshade.app.ui.LockGate.unlockThen(context, show) else show()
                         } else {
-                            NotifOps.press(context, a)
+                            NotifOps.press(context, a, item)
                         }
                     }
                 }
@@ -791,9 +836,11 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                 }
             }
         }
+        SmartActionChips(item, s)
+        if (panel != Panel.REPLY) SmartReplyChips(item, s, lockScreen)
         when (panel) {
             Panel.NONE -> Unit
-            Panel.REPLY -> replyTo?.let { a -> ReplyRow(a) { panel = Panel.NONE } }
+            Panel.REPLY -> replyTo?.let { a -> ReplyRow(a, item) { panel = Panel.NONE } }
             Panel.SNOOZE -> SnoozeRow(item, s) { panel = Panel.NONE }
             Panel.ACTIONS -> ExtractPanel(item)
             Panel.MENU -> MenuRow(item, s, onClose) { panel = Panel.NONE }
@@ -802,7 +849,7 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
 }
 
 @Composable
-private fun ReplyRow(action: NAction, done: () -> Unit) {
+private fun ReplyRow(action: NAction, item: ShadeItem, done: () -> Unit) {
     val context = LocalContext.current
     var text by remember { mutableStateOf("") }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
@@ -815,7 +862,7 @@ private fun ReplyRow(action: NAction, done: () -> Unit) {
         )
         IconButton(onClick = {
             if (text.isNotBlank()) {
-                val ok = NotifOps.reply(context, action, text)
+                val ok = NotifOps.reply(context, action, text, item)
                 Effects.toast(context, if (ok) "Sent" else "Could not send")
                 done()
             }
@@ -951,6 +998,7 @@ private fun GroupCard(group: ShadeFilter.Group, s: AppSettings, onClose: () -> U
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                     )
                 }
+                GroupSummary(group.appName, group.items, accentFor(group.items.first(), s, MaterialTheme.colorScheme.primary))
                 group.items.take(6).forEach { item ->
                     Text(
                         listOf(item.title, item.displayText).filter { it.isNotBlank() }.joinToString(": "),

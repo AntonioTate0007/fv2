@@ -35,6 +35,8 @@ class App : Application() {
         SettingsRepo.init(this)
         RuleStore.init(this)
         HoldStore.init(this)
+        com.thumbshade.app.ai.Engagement.init(this)
+        com.thumbshade.app.ai.Digest.init(this)
         createChannels()
 
         NotificationRepo.items.debounce(300).onEach { Widgets.updateAll(this) }.launchIn(scope)
@@ -57,6 +59,11 @@ class App : Application() {
                 description = "\"Remind me later\" from your rules"
             }
         )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_DIGEST, "Smart digest", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "One summary when your held low-priority notifications come back"
+            }
+        )
     }
 
     private fun applyLauncherAlias(enabled: Boolean) {
@@ -71,6 +78,7 @@ class App : Application() {
     companion object {
         const val CHANNEL_SERVICE = "service"
         const val CHANNEL_REMINDERS = "reminders"
+        const val CHANNEL_DIGEST = "digest"
 
         fun postReminder(context: Context, app: String, title: String, pkg: String) {
             val nm = context.getSystemService(NotificationManager::class.java)

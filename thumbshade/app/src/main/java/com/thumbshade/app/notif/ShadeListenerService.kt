@@ -7,6 +7,9 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.thumbshade.app.ai.AiHub
+import com.thumbshade.app.ai.Digest
+import com.thumbshade.app.ai.Engagement
 import com.thumbshade.app.overlay.EdgeLight
 import com.thumbshade.app.overlay.OverlayService
 import com.thumbshade.app.rules.HoldStore
@@ -42,6 +45,7 @@ class ShadeListenerService : NotificationListenerService() {
         NotificationRepo.upsert(item)
         if (RoundTrips.consume(sbn.key)) return
         if (HoldStore.onReposted(sbn.key)) {
+            runCatching { Digest.onReturned(this, item) }
             OverlayService.onNewNotification(item)
             return
         }
@@ -51,9 +55,14 @@ class ShadeListenerService : NotificationListenerService() {
         if (!changed || (previous != null && onlyAlertOnce)) return
         if (item.groupSummary) return
 
-        val outcome = runCatching { RuleEngine.onPosted(this, item) }
+        runCatching { AiHub.onPosted(this, item) }
+        var outcome = runCatching { RuleEngine.onPosted(this, item) }
             .onFailure { Log.w(TAG, "rules failed", it) }
             .getOrNull() ?: RuleEngine.Outcome()
+        // Smart digest: what rules didn't handle and isn't important waits for the next digest.
+        if (!outcome.removed && runCatching { Digest.consider(this, item, AiHub.urgency(item)) }.getOrDefault(false)) {
+            outcome = outcome.copy(removed = true, silenced = true)
+        }
         if (!outcome.removed && !outcome.silenced && !item.ongoing) {
             runCatching { EdgeLight.onNotification(this, item, outcome.edgeStyle, outcome.edgeColor) }
         }
@@ -62,6 +71,14 @@ class ShadeListenerService : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification, rankingMap: RankingMap?, reason: Int) {
         if (reason == REASON_SNOOZED && RoundTrips.isExpected(sbn.key)) return
+        // Learn from what you did in the system shade too: tapped it, or swiped it away.
+        NotificationRepo.get(sbn.key)?.let { item ->
+            when (reason) {
+                REASON_CLICK -> AiHub.record(item, Engagement.Event.OPENED)
+                REASON_CANCEL -> AiHub.record(item, Engagement.Event.DISMISSED)
+            }
+        }
+        AiHub.forget(sbn.key)
         NotificationRepo.remove(sbn.key)
     }
 

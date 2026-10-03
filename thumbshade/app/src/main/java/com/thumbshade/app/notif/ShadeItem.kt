@@ -64,10 +64,15 @@ data class ShadeItem(
     val senderIcon: Icon?,
     /** The app's own layout, for notifications that draw a custom view (weather, sports scores…). */
     val customView: android.widget.RemoteViews?,
+    /** Replies and actions Android's own assistant suggested for this notification. */
+    val smartReplies: List<String> = emptyList(),
+    val smartActions: List<NAction> = emptyList(),
     val sbn: StatusBarNotification,
 ) {
     val displayText: String get() = bigText.ifBlank { text }
     val replyAction: NAction? get() = actions.firstOrNull { it.isReply }
+    /** Who it's from, for learning: the conversation, else the title. */
+    val sender: String get() = conversationTitle.ifBlank { title }
     val allText: String get() = listOf(title, displayText, subText).filter { it.isNotBlank() }.joinToString("\n") +
         messages.joinToString("") { "\n" + it.text }
 
@@ -100,6 +105,8 @@ data class ShadeItem(
 
             var importance = 3
             var matchesDnd = true
+            var smartReplies = emptyList<String>()
+            var smartActions = emptyList<NAction>()
             var channelId = n.channelId.orEmpty()
             if (ranking != null) {
                 val r = NotificationListenerService.Ranking()
@@ -107,6 +114,10 @@ data class ShadeItem(
                     importance = r.importance
                     matchesDnd = r.matchesInterruptionFilter()
                     r.channel?.id?.let { channelId = it }
+                    smartReplies = r.smartReplies.orEmpty().map { it.toString() }
+                    smartActions = r.smartActions.orEmpty().map { a ->
+                        NAction(a.title?.toString().orEmpty(), a.actionIntent, a.remoteInputs?.toList() ?: emptyList())
+                    }
                 }
             }
 
@@ -175,6 +186,8 @@ data class ShadeItem(
                     ?: lastSenderIcon
                     ?: if (isMessaging) n.getLargeIcon() else null,
                 customView = n.bigContentView ?: n.contentView,
+                smartReplies = smartReplies,
+                smartActions = smartActions,
                 sbn = sbn,
             )
         }

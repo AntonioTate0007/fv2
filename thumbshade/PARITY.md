@@ -60,3 +60,10 @@ items exist in ThumbShade; the rest are planned.
 - [x] Usage access as an alternative to the accessibility service
 - [x] Debug messages
 - [ ] Translations
+
+## Smart features (beyond the original)
+- [x] Summaries of busy chats and app groups (Gemini Nano via Android AICore where available, built-in otherwise)
+- [x] Learned priority: smart order (important nearest the thumb), minimise low-priority, urgent/low tags
+- [x] Smart replies (intent-based plus Android's own suggestions), "Share my location"
+- [x] Smart actions: add to calendar, track parcel, flight status, open address, copy code
+- [x] Focus batching: smart digest at chosen times, quiet "normal" notifications

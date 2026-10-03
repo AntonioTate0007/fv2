@@ -189,7 +189,7 @@ object RuleEngine {
     }
 
     /** True when one of the notification's people is in the user's contacts. */
-    private fun fromContact(context: Context, item: ShadeItem): Boolean {
+    fun fromContact(context: Context, item: ShadeItem): Boolean {
         if (item.people.isEmpty()) return false
         if (context.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return false
         return item.people.any { person ->

@@ -307,6 +307,8 @@ data class AppSettings(
     val modes: List<GestureMode> = listOf(GestureMode()),
     val activeMode: Int = 0,
 
+    val ai: AiSettings = AiSettings(),
+
     // Icons
     /** Package of the icon pack in use, "" for the apps' own icons. */
     val iconPack: String = "",

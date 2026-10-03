@@ -34,13 +34,13 @@ shot 3-shade-open
 adb shell input keyevent KEYCODE_BACK
 sleep 2
 
-# 4. Visit every settings tab (bottom bar, 5 equal slots).
+# 4. Visit every settings tab (bottom bar, 6 equal slots).
 adb shell am start -W -n $PKG/.ui.MainActivity
 sleep 3
 read -r W H < <(adb shell wm size | awk -F'[ x]' '/Physical/{print $3, $4}')
 Y=$((H - H / 30))
-for i in 0 1 2 3 4; do
-  X=$((W * (2 * i + 1) / 10))
+for i in 0 1 2 3 4 5; do
+  X=$((W * (2 * i + 1) / 12))
   adb shell input tap "$X" "$Y"
   sleep 3
   shot "4-tab-$i"

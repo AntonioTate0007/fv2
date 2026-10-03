@@ -30,7 +30,7 @@ object ShadeFilter {
         val hide = RuleMatcher.splitWords(s.hideWords)
         return all.filter { item ->
             when {
-                item.pkg == OWN_PACKAGE -> false
+                item.pkg == OWN_PACKAGE && item.channelId != com.thumbshade.app.App.CHANNEL_DIGEST -> false
                 s.showMedia && item.mediaToken != null -> false
                 s.includeApps.isNotEmpty() && item.pkg !in s.includeApps -> false
                 item.pkg in s.excludeApps -> false
@@ -56,7 +56,7 @@ object ShadeFilter {
      * Entries in on-screen order, top to bottom: top-pinned apps, then the rest (newest nearest the
      * thumb when "newest at the bottom" is on), then bottom-pinned apps.
      */
-    fun entries(all: List<ShadeItem>, s: AppSettings): List<Entry> {
+    fun entries(all: List<ShadeItem>, s: AppSettings, priority: (ShadeItem) -> Float = { 0f }): List<Entry> {
         val items = visible(all, s)
         val grouped = items.filter { it.pkg in s.groupApps }.groupBy { it.pkg }
         val entries = mutableListOf<Entry>()
@@ -64,14 +64,24 @@ object ShadeFilter {
         grouped.forEach { (pkg, list) ->
             entries += if (list.size == 1) Single(list.first()) else Group(pkg, list.first().appName, list.sortedByDescending { it.postTime })
         }
+        val pinOrder = compareBy<Entry> {
+            when (it.pkg) {
+                in s.pinTop -> 0
+                in s.pinBottom -> 2
+                else -> 1
+            }
+        }
+        if (!s.ai.smartOrder) return entries.sortedWith(pinOrder.thenBy { if (s.newestAtBottom) it.time else -it.time })
+        // Smart order: the most important land nearest the thumb (the bottom when newest is at
+        // the bottom, else the top); ties go by time.
+        fun score(e: Entry): Float = when (e) {
+            is Single -> priority(e.item)
+            is Group -> e.items.maxOf(priority)
+        }
+        val scores = entries.associateWith(::score)
         return entries.sortedWith(
-            compareBy<Entry> {
-                when (it.pkg) {
-                    in s.pinTop -> 0
-                    in s.pinBottom -> 2
-                    else -> 1
-                }
-            }.thenBy { if (s.newestAtBottom) it.time else -it.time }
+            pinOrder.thenBy { if (s.newestAtBottom) scores[it] else -(scores[it] ?: 0f) }
+                .thenBy { if (s.newestAtBottom) it.time else -it.time }
         )
     }
 }
