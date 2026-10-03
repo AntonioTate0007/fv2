@@ -35,3 +35,37 @@ jobs:
             thumbshade/app/build/outputs/apk/debug/*.apk
             thumbshade/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+  smoke-test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: thumbshade
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: thumbshade-apk
+          path: thumbshade/app/build/outputs/apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the app on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: thumbshade
+          script: bash ci/smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: thumbshade-smoke
+          path: thumbshade/smoke

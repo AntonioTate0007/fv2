@@ -59,6 +59,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // If the app crashed last time, show the report in plain Android views first, so it can be
+        // read even when the crash is in the normal (Compose) screens.
+        val crash = com.thumbshade.app.CrashLog.read(this)
+        if (crash != null) {
+            setContentView(CrashReportView.build(this, crash) {
+                com.thumbshade.app.CrashLog.clear(this)
+                recreate()
+            })
+            return
+        }
         handle(intent)
         setContent {
             ThumbTheme {
