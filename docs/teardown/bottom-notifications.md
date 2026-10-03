@@ -14,6 +14,7 @@ constraints — must be confirmed against the decompiled APK.
 | Package | `com.bottomnotifications.app` [O] |
 | Developer | "Vojislav", solo dev, GitHub `vdb86` (Belgrade, per screenshots) [O] |
 | Public repo | `github.com/vdb86/Bottom-notifications` — issue tracker + screenshots only, **no source** [O] |
+| Version | 2.3.1 as of 2026-10-03; the in-app "What's new" lists releases back to 1.9 [O] |
 | Min SDK | Android 10 (API 29) [O] |
 | Monetisation | Free + "Pro" tier (PRO badge, "Bottom notifications Pro — all features available") → Play Billing [O/I] |
 | Network | Claims **no INTERNET permission** [O] → license check must be Play Billing via Play Store IPC (no own backend) [I] |
@@ -125,6 +126,10 @@ Border effects (Basic, Multicolour, Glow, Echo, Neon, Lightning, Rise, Heartbeat
 Converge) and button effects (Wave, Bubbles, Fireworks, … Confetti), coloured by the
 notification's `color`, the theme, or a custom colour. This needs a full-screen,
 non-touchable overlay plus a screen wake lock (or `setTurnScreenOn`) [I].
+The 2.3.1 changelog ("fixed taps near the button not reaching the app below while Screen
+lighting or the button's appear and hide animation played") confirms the effects draw in
+an overlay window larger than the button, so that window must be made pass-through
+(`FLAG_NOT_TOUCHABLE`) while an animation plays [O/I].
 
 ### Other [O]
 Material You (`dynamicDarkColorScheme`), icon-pack support (ADW/Nova `appfilter.xml`
