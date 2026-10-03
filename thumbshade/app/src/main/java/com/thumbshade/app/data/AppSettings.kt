@@ -73,9 +73,6 @@ enum class EdgeStyle(val label: String, val aroundButton: Boolean = false) {
 enum class EdgeColorMode(val label: String) { NOTIFICATION("Notification colour"), ACCENT("Theme accent"), CUSTOM("Custom") }
 
 @Serializable
-enum class ThemeMode(val label: String) { SYSTEM("Follow system"), DARK("Dark"), LIGHT("Light"), BLACK("Pure black") }
-
-@Serializable
 enum class ClusterSide(val label: String) { RING("Ring around"), ABOVE("Above"), SIDE("Beside") }
 
 @Serializable
@@ -83,9 +80,14 @@ data class AppSettings(
     // General
     val serviceEnabled: Boolean = true,
     val showButton: Boolean = true,
-    val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val dynamicColor: Boolean = true,
-    val accentColor: Long = 0xFF4DD9C9,
+    val dynamicColor: Boolean = false,
+    val autoTheme: Boolean = true,
+    val activeThemeId: String = "builtin:dark",
+    val lightThemeId: String = "builtin:light",
+    val darkThemeId: String = "builtin:dark",
+    val customThemes: List<ThemeDef> = emptyList(),
+    val tabBarBottom: Boolean = true,
+    val notificationControls: Boolean = true,
     val hideOverlayWarning: Boolean = true,
     val lockscreenShade: Boolean = true,
     val openShadeIcon: Boolean = false,

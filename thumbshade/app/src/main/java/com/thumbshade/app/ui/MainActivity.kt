@@ -27,9 +27,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,7 +85,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val label: String, val icon: ImageVector) {
+private enum class AppTab(val label: String, val icon: ImageVector) {
     GENERAL("General", Icons.Filled.Tune),
     NOTIFICATIONS("Notifications", Icons.Filled.Notifications),
     BUTTON("Button", Icons.Filled.RadioButtonChecked),
@@ -89,35 +93,47 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     RULES("Rules", Icons.Filled.Rule),
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppRoot(pendingRulePkg: String?, onRulePkgConsumed: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    if (pendingRulePkg != null && tab != Tab.RULES.ordinal) tab = Tab.RULES.ordinal
+    if (pendingRulePkg != null && tab != AppTab.RULES.ordinal) tab = AppTab.RULES.ordinal
 
+    val s by com.thumbshade.app.data.SettingsRepo.state.collectAsState()
     Scaffold(
         topBar = {
-            Row(
-                Modifier
-                    .padding(top = 40.dp, start = 20.dp, end = 20.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("ThumbShade", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Column(Modifier.padding(top = 40.dp)) {
+                Text(
+                    "ThumbShade",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
+                )
+                if (!s.tabBarBottom) {
+                    PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
+                        AppTab.entries.forEach { t ->
+                            Tab(selected = tab == t.ordinal, onClick = { tab = t.ordinal }, text = { Text(t.label, maxLines = 1) })
+                        }
+                    }
+                }
             }
         },
         bottomBar = {
-            NavigationBar {
-                Tab.entries.forEach { t ->
-                    NavigationBarItem(
-                        selected = tab == t.ordinal,
-                        onClick = { tab = t.ordinal },
-                        icon = { Icon(t.icon, null) },
-                        label = { Text(t.label, maxLines = 1) },
-                    )
+            if (s.tabBarBottom) {
+                NavigationBar {
+                    AppTab.entries.forEach { t ->
+                        NavigationBarItem(
+                            selected = tab == t.ordinal,
+                            onClick = { tab = t.ordinal },
+                            icon = { Icon(t.icon, null) },
+                            label = { Text(t.label, maxLines = 1) },
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
-        if (Tab.entries[tab] == Tab.RULES) {
+        if (AppTab.entries[tab] == AppTab.RULES) {
             RulesScreen(Modifier.padding(padding), pendingRulePkg, onRulePkgConsumed)
         } else {
             Column(
@@ -128,12 +144,12 @@ private fun AppRoot(pendingRulePkg: String?, onRulePkgConsumed: () -> Unit) {
                     .padding(PaddingValues(horizontal = 14.dp, vertical = 8.dp)),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                when (Tab.entries[tab]) {
-                    Tab.GENERAL -> GeneralScreen()
-                    Tab.NOTIFICATIONS -> NotificationsScreen()
-                    Tab.BUTTON -> ButtonScreen()
-                    Tab.SHADE -> ShadeSettingsScreen()
-                    Tab.RULES -> Unit
+                when (AppTab.entries[tab]) {
+                    AppTab.GENERAL -> GeneralScreen()
+                    AppTab.NOTIFICATIONS -> NotificationsScreen()
+                    AppTab.BUTTON -> ButtonScreen()
+                    AppTab.SHADE -> ShadeSettingsScreen()
+                    AppTab.RULES -> Unit
                 }
             }
         }

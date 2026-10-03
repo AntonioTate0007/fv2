@@ -62,7 +62,7 @@ fun ButtonFace(pulse: Int, battery: Float?) {
     }
 
     val shape = RoundedCornerShape(percent = s.buttonCornerPercent.coerceIn(0, 50))
-    val ringColor = Color(s.accentColor)
+    val ringColor = Color(com.thumbshade.app.ui.currentAccent(androidx.compose.ui.platform.LocalContext.current, s))
     Box(
         modifier = Modifier
             .fillMaxSize()

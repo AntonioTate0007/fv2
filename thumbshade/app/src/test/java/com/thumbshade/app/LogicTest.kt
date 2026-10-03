@@ -3,6 +3,8 @@ package com.thumbshade.app
 import com.thumbshade.app.data.AppJson
 import com.thumbshade.app.data.AppSettings
 import com.thumbshade.app.data.Backup
+import com.thumbshade.app.data.ThemeDef
+import com.thumbshade.app.data.Themes
 import com.thumbshade.app.notif.Extract
 import com.thumbshade.app.rules.ActionType
 import com.thumbshade.app.rules.BatchMode
@@ -82,5 +84,18 @@ class LogicTest {
         // Unknown keys from a newer version are ignored.
         val withExtra = json.replaceFirst("{", "{\"futureKey\":1,")
         assertEquals(backup, AppJson.decodeFromString(Backup.serializer(), withExtra))
+    }
+
+    @Test
+    fun themeResolution() {
+        val mine = ThemeDef(id = "mine", name = "Mine", dark = true)
+        val auto = AppSettings(autoTheme = true, lightThemeId = Themes.paper.id, darkThemeId = "mine", customThemes = listOf(mine))
+        assertEquals(Themes.paper, Themes.resolve(auto, systemDark = false))
+        assertEquals(mine, Themes.resolve(auto, systemDark = true))
+        val fixed = auto.copy(autoTheme = false, activeThemeId = Themes.ocean.id)
+        assertEquals(Themes.ocean, Themes.resolve(fixed, systemDark = false))
+        // A deleted or unknown theme falls back to a built-in one.
+        assertEquals(Themes.dark, Themes.resolve(fixed.copy(activeThemeId = "gone"), systemDark = false))
+        assertEquals(Themes.light, Themes.resolve(auto.copy(lightThemeId = "gone"), systemDark = false))
     }
 }

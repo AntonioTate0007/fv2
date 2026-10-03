@@ -58,9 +58,9 @@ object EdgeLight {
         val color = when {
             colorOverride != null -> Color(colorOverride)
             s.edgeColorMode == EdgeColorMode.CUSTOM -> Color(s.edgeCustomColor)
-            s.edgeColorMode == EdgeColorMode.ACCENT -> Color(s.accentColor)
+            s.edgeColorMode == EdgeColorMode.ACCENT -> Color(com.thumbshade.app.ui.currentAccent(context, s))
             item.color != 0 -> Color(item.color).copy(alpha = 1f)
-            else -> Color(s.accentColor)
+            else -> Color(com.thumbshade.app.ui.currentAccent(context, s))
         }
         val border = styleOverride?.let { runCatching { EdgeStyle.valueOf(it) }.getOrNull() } ?: s.edgeStyle
         val buttonFx = if (styleOverride == null) s.buttonEffect else null
@@ -69,7 +69,7 @@ object EdgeLight {
 
     fun preview(context: Context) {
         val s = SettingsRepo.current
-        show(context.applicationContext, s.edgeStyle, s.buttonEffect, if (s.edgeColorMode == EdgeColorMode.CUSTOM) Color(s.edgeCustomColor) else Color(s.accentColor), s.edgeDurationMs.toLong(), s.edgeThicknessDp, false)
+        show(context.applicationContext, s.edgeStyle, s.buttonEffect, if (s.edgeColorMode == EdgeColorMode.CUSTOM) Color(s.edgeCustomColor) else Color(com.thumbshade.app.ui.currentAccent(context, s)), s.edgeDurationMs.toLong(), s.edgeThicknessDp, false)
     }
 
     private fun show(context: Context, border: EdgeStyle, buttonFx: EdgeStyle?, color: Color, durationMs: Long, thicknessDp: Int, wake: Boolean) {

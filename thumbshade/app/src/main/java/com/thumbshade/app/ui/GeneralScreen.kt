@@ -48,7 +48,6 @@ import com.thumbshade.app.access.AssistService
 import com.thumbshade.app.data.AppJson
 import com.thumbshade.app.data.Backup
 import com.thumbshade.app.data.SettingsRepo
-import com.thumbshade.app.data.ThemeMode
 import com.thumbshade.app.notif.ShadeListenerService
 import com.thumbshade.app.overlay.OverlayService
 import com.thumbshade.app.rules.Effects
@@ -149,13 +148,7 @@ fun GeneralScreen() {
         }, modifier = Modifier.fillMaxWidth()) { Text("Open the shade now") }
     }
 
-    Section("Look") {
-        ChoiceRow("Theme", ThemeMode.entries, s.themeMode, { it.label }) { v -> SettingsRepo.update { it.copy(themeMode = v) } }
-        if (Build.VERSION.SDK_INT >= 31) {
-            SwitchRow("Material You colours", s.dynamicColor, "Follow your wallpaper") { on -> SettingsRepo.update { it.copy(dynamicColor = on) } }
-        }
-        ColorRow("Accent colour", s.accentColor) { c -> SettingsRepo.update { it.copy(accentColor = c) } }
-    }
+    ThemeSection()
 
     Section("Lock screen") {
         SwitchRow("Show shade on lock screen", s.lockscreenShade, "Opening the shade while locked shows it over the lock screen") { on ->

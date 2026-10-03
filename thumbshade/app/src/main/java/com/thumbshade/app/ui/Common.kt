@@ -23,7 +23,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.graphics.drawable.toBitmap
 import com.thumbshade.app.data.SettingsRepo
-import com.thumbshade.app.data.ThemeMode
+import com.thumbshade.app.data.ThemeDef
+import com.thumbshade.app.data.Themes
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import com.thumbshade.app.notif.AppInfoCache
 import java.util.concurrent.ConcurrentHashMap
 
@@ -68,23 +72,63 @@ fun relativeTime(time: Long): String {
 
 fun clockTime(time: Long): String = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(time))
 
+/** The accent colour in effect, for code outside Compose (button ring, screen lighting). */
+fun currentAccent(context: android.content.Context, s: com.thumbshade.app.data.AppSettings): Long {
+    val night = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+        android.content.res.Configuration.UI_MODE_NIGHT_YES
+    if (s.dynamicColor && Build.VERSION.SDK_INT >= 31) {
+        val scheme = if (night) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        return scheme.primary.toArgb().toLong() and 0xFFFFFFFFL
+    }
+    return Themes.resolve(s, night).accent
+}
+
+/** Material colours built from one of our themes. */
+fun ThemeDef.toColorScheme(): ColorScheme {
+    val accent = Color(accent)
+    val bg = Color(background)
+    val card = Color(card)
+    val text = Color(text)
+    val secondary = Color(secondaryText)
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    val onAccent = if (accent.luminance() > 0.5f) Color.Black else Color.White
+    return base.copy(
+        primary = accent,
+        onPrimary = onAccent,
+        primaryContainer = accent.copy(alpha = 0.25f).compositeOver(card),
+        onPrimaryContainer = text,
+        secondary = accent,
+        onSecondary = onAccent,
+        secondaryContainer = accent.copy(alpha = 0.18f).compositeOver(card),
+        onSecondaryContainer = text,
+        tertiary = accent,
+        background = bg,
+        onBackground = text,
+        surface = bg,
+        onSurface = text,
+        surfaceVariant = card,
+        onSurfaceVariant = secondary,
+        surfaceContainerLowest = bg,
+        surfaceContainerLow = card.copy(alpha = 0.6f).compositeOver(bg),
+        surfaceContainer = card,
+        surfaceContainerHigh = text.copy(alpha = 0.06f).compositeOver(card),
+        surfaceContainerHighest = text.copy(alpha = 0.1f).compositeOver(card),
+        outline = secondary.copy(alpha = 0.6f),
+        outlineVariant = secondary.copy(alpha = 0.3f),
+    )
+}
+
 @Composable
 fun ThumbTheme(content: @Composable () -> Unit) {
     val s by SettingsRepo.state.collectAsState()
     val context = LocalContext.current
-    val dark = when (s.themeMode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-        ThemeMode.DARK, ThemeMode.BLACK -> true
-        ThemeMode.LIGHT -> false
-    }
-    val accent = Color(s.accentColor)
-    var scheme: ColorScheme = when {
-        s.dynamicColor && Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> darkColorScheme(primary = accent, secondary = accent, tertiary = accent)
-        else -> lightColorScheme(primary = accent, secondary = accent, tertiary = accent)
-    }
-    if (s.themeMode == ThemeMode.BLACK) {
-        scheme = scheme.copy(background = Color.Black, surface = Color.Black, surfaceContainer = Color(0xFF111111), surfaceContainerHigh = Color(0xFF1A1A1A))
+    val systemDark = isSystemInDarkTheme()
+    val scheme: ColorScheme = if (s.dynamicColor && Build.VERSION.SDK_INT >= 31) {
+        // Material You: light or dark follows the phone when Auto is on, otherwise the chosen theme.
+        val dark = if (s.autoTheme) systemDark else Themes.resolve(s, systemDark).dark
+        if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } else {
+        Themes.resolve(s, systemDark).toColorScheme()
     }
     MaterialTheme(colorScheme = scheme, content = content)
 }

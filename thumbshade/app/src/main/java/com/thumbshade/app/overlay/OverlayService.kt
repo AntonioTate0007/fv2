@@ -46,6 +46,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
@@ -92,6 +95,10 @@ class OverlayService : Service() {
         registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
 
         scope.launch {
+            // Re-post the running notification when its buttons are switched on or off.
+            SettingsRepo.state.map { it.notificationControls }.distinctUntilChanged().drop(1).collect { startAsForeground() }
+        }
+        scope.launch {
             combine(SettingsRepo.state, NotificationRepo.items, AssistService.state) { s, items, assist -> Triple(s, items, assist) }
                 .collect { (s, items, assist) -> applyState(s, items.size, assist) }
         }
@@ -133,13 +140,17 @@ class OverlayService : Service() {
             this, 3, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification: Notification = NotificationCompat.Builder(this, App.CHANNEL_SERVICE)
+        val builder = NotificationCompat.Builder(this, App.CHANNEL_SERVICE)
             .setSmallIcon(R.drawable.ic_stat_shade)
             .setContentTitle("ThumbShade is running")
             .setContentText("Tap to open the shade")
             .setContentIntent(open)
-            .addAction(0, "Settings", settings)
-            .addAction(0, "Show / hide button", toggleButton)
+        if (SettingsRepo.current.notificationControls) {
+            builder.addAction(0, "Toggle shade", open)
+                .addAction(0, "Toggle button", toggleButton)
+                .addAction(0, "Settings", settings)
+        }
+        val notification: Notification = builder
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
