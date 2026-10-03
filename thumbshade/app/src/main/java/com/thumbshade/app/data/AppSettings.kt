@@ -166,6 +166,12 @@ enum class BrowseStyle(val label: String) {
 }
 
 @Serializable
+enum class TickSound(val label: String) {
+    NONE("None"), SYSTEM("System click"), TICK("Tick"), SOFT("Soft tap"), WOOD("Wood block"), POP("Pop"),
+    BUBBLE("Bubble"), KEYBOARD("Keyboard"), TYPEWRITER("Typewriter"), GLASS("Glass"), RATCHET("Ratchet"),
+}
+
+@Serializable
 enum class ShadeOverlay(val label: String) { NONE("None"), DIM("Dim"), BLUR("Blur"), DIM_BLUR("Dim and blur") }
 
 @Serializable
@@ -330,6 +336,13 @@ data class AppSettings(
     val pullCloseDp: Int = 90,
     val wrapAround: Boolean = false,
     val swipeDismissFraction: Float = 0.4f,
+    /** A click for each notification that scrolls past. */
+    val scrollSound: TickSound = TickSound.TICK,
+    val scrollSoundVolume: Float = 0.45f,
+    val scrollHaptic: Boolean = false,
+    val scrollSoundRespectSilent: Boolean = true,
+    /** Action wheel: click and vibrate on each slot. */
+    val wheelHaptic: Boolean = true,
     val browseStyle: BrowseStyle = BrowseStyle.LIST,
     val shadeAnim: ShadeAnim = ShadeAnim.SLIDE,
     val cardCornerDp: Int = 24,

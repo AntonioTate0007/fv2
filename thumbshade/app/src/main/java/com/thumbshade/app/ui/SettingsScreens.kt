@@ -538,6 +538,33 @@ fun ShadeSettingsScreen() {
         SwitchRow("Close when it's empty", s.closeWhenEmpty) { v -> edit { it.copy(closeWhenEmpty = v) } }
     }
 
+    Section("Scrolling sounds") {
+        Hint("A click for each notification that scrolls past, like turning a dial.")
+        ChoiceRow("Sound", com.thumbshade.app.data.TickSound.entries, s.scrollSound, { it.label }) { v ->
+            edit { it.copy(scrollSound = v) }
+            com.thumbshade.app.overlay.ScrollSounds.prepare(context, v)
+        }
+        if (s.scrollSound != com.thumbshade.app.data.TickSound.NONE) {
+            if (s.scrollSound == com.thumbshade.app.data.TickSound.SYSTEM) {
+                Hint("Uses Android's touch sound, so it follows Settings → Sound → Touch sounds.")
+            } else {
+                SliderRow("Volume", s.scrollSoundVolume, 0.05f..1f, format = { "${(it * 100).roundToInt()}%" }) { v -> edit { it.copy(scrollSoundVolume = v) } }
+            }
+            SwitchRow("Quiet when the phone is on silent or vibrate", s.scrollSoundRespectSilent) { v -> edit { it.copy(scrollSoundRespectSilent = v) } }
+            val view = androidx.compose.ui.platform.LocalView.current
+            OutlinedButton(onClick = {
+                com.thumbshade.app.overlay.ScrollSounds.prepare(context, s.scrollSound)
+                // Three clicks, as if scrolling past three notifications.
+                val h = android.os.Handler(android.os.Looper.getMainLooper())
+                listOf(120L, 260L, 400L).forEach { d ->
+                    h.postDelayed({ com.thumbshade.app.overlay.ScrollSounds.play(context, s.scrollSound, s.scrollSoundVolume, false, view) }, d)
+                }
+            }, modifier = Modifier.fillMaxWidth()) { Text("Try it") }
+        }
+        SwitchRow("Vibrate on each notification too", s.scrollHaptic, "A light tick you can feel while scrolling") { v -> edit { it.copy(scrollHaptic = v) } }
+        SwitchRow("Vibrate on each action-wheel slot", s.wheelHaptic) { v -> edit { it.copy(wheelHaptic = v) } }
+    }
+
     NotificationCardSections(s)
 
     Section("Screen lighting") {

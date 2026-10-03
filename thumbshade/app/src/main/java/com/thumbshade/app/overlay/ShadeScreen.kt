@@ -251,6 +251,19 @@ private fun ShadePanel(
         }
     }
 
+    // A click for each notification that scrolls past, like the detents of a dial.
+    val view = androidx.compose.ui.platform.LocalView.current
+    LaunchedEffect(s.scrollSound) { ScrollSounds.prepare(context, s.scrollSound) }
+    LaunchedEffect(listState) {
+        androidx.compose.runtime.snapshotFlow { listState.firstVisibleItemIndex }
+            .collect {
+                if (!listState.isScrollInProgress) return@collect
+                val st = SettingsRepo.current
+                ScrollSounds.play(context, st.scrollSound, st.scrollSoundVolume, st.scrollSoundRespectSilent, view)
+                if (st.scrollHaptic) view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            }
+    }
+
     // Pulling past either end of the list: closes the shade (push/pull to close) or jumps to the
     // other end (wrap-around). The panel follows the finger with a rubber-band feel.
     val pull = remember { Animatable(0f) }

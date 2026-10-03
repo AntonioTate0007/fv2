@@ -328,11 +328,17 @@ class OverlayService : Service() {
                 val c = buttonCenter() ?: return
                 val size = buttonSize() ?: return
                 ActionWheel.show(this@OverlayService, mode(), c.first.toFloat(), c.second.toFloat(), size.first / 2f, size.second / 2f)
-                frame.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                val st = SettingsRepo.current
+                ScrollSounds.prepare(this@OverlayService, st.scrollSound)
+                if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             }
 
             override fun onWheelMove(rawX: Float, rawY: Float) {
-                if (ActionWheel.move(rawX, rawY)) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                if (ActionWheel.move(rawX, rawY)) {
+                    val st = SettingsRepo.current
+                    if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    ScrollSounds.play(this@OverlayService, st.scrollSound, st.scrollSoundVolume, st.scrollSoundRespectSilent, frame)
+                }
             }
 
             override fun onWheelEnd(run: Boolean) {
