@@ -367,7 +367,7 @@ private fun MediaFace(m: MediaHub.Media, look: MediaLook, tint: Color, dimPercen
 
 /** App icons of the latest notifications, around, above or beside the button. */
 @Composable
-fun IconCluster(pulse: Int = 0) {
+fun IconCluster(pulse: Int = 0, shadeClosed: Int = 0) {
     val s by SettingsRepo.state.collectAsState()
     // 0 = spread out, 1 = folded into the button. Each new notification spreads them again.
     val fold = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -377,6 +377,10 @@ fun IconCluster(pulse: Int = 0) {
             kotlinx.coroutines.delay(s.clusterFoldSeconds * 1000L)
             fold.animateTo(1f, tween(500))
         }
+    }
+    // You've looked at them in the shade: tuck them away until something new arrives.
+    LaunchedEffect(shadeClosed) {
+        if (shadeClosed > 0 && SettingsRepo.current.clusterFoldAfterShade) fold.animateTo(1f, tween(400))
     }
     val spread = 1f - fold.value
     val all by NotificationRepo.items.collectAsState()

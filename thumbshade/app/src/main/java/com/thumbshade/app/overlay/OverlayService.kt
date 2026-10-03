@@ -77,6 +77,8 @@ class OverlayService : Service() {
 
     /** Compose-observable state for the button face. */
     private var pulse by mutableIntStateOf(0)
+    /** Bumps each time the shade closes, so the icon cluster can fold away. */
+    private var shadeClosed by mutableIntStateOf(0)
     private var battery by mutableStateOf<Float?>(null)
     private var buttonHiddenUntil = 0L
     private var lastApplied: AppSettings? = null
@@ -416,7 +418,7 @@ class OverlayService : Service() {
     private fun addCluster(s: AppSettings) {
         val (w, h) = clusterSizePx(s)
         val params = OverlayWindows.params(w, h, touchable = false, noLimits = true)
-        val view = OverlayWindows.composeView(this, owner) { IconCluster(pulse) }
+        val view = OverlayWindows.composeView(this, owner) { IconCluster(pulse, shadeClosed) }
         runCatching { wm.addView(view, params) }.onFailure { return }
         clusterView = view
         clusterParams = params
@@ -557,6 +559,7 @@ class OverlayService : Service() {
 
     fun closeShade() {
         if (shadeView == null) return
+        shadeClosed++
         shadeState.targetState = false
         main.postDelayed({ if (!shadeState.targetState) removeShadeNow() }, 650)
     }

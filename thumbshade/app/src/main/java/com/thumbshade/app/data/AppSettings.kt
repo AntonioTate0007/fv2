@@ -287,6 +287,8 @@ data class AppSettings(
     /** Fold the icons back into the button a while after a new notification. */
     val clusterFold: Boolean = true,
     val clusterFoldSeconds: Int = 6,
+    /** Fold the icons right away once you've opened and closed the shade (you've seen them). */
+    val clusterFoldAfterShade: Boolean = true,
     val monochromeIcons: Boolean = false,
     val snapToEdge: Boolean = true,
     val snapStyle: SnapStyle = SnapStyle.HALF,

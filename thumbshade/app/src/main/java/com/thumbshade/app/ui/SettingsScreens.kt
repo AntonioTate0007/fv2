@@ -306,6 +306,10 @@ fun ButtonScreen() {
                 "Fold icons back into the button", s.clusterFold,
                 "The icons fly out when a notification arrives, then tuck back in so they don't cover your apps",
             ) { v -> edit { it.copy(clusterFold = v) } }
+            SwitchRow(
+                "Fold icons after I close the shade", s.clusterFoldAfterShade,
+                "Once you've opened the shade and seen them, they tuck away until a new notification arrives",
+            ) { v -> edit { it.copy(clusterFoldAfterShade = v) } }
             if (s.clusterFold) {
                 SliderRow("Fold back after", s.clusterFoldSeconds.coerceAtLeast(1).toFloat(), 1f..60f, format = { "${it.roundToInt()} s" }) { v ->
                     edit { it.copy(clusterFoldSeconds = v.roundToInt()) }
