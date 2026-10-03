@@ -38,6 +38,7 @@ import com.thumbshade.app.data.AppSettings
 import com.thumbshade.app.data.ClusterSide
 import com.thumbshade.app.data.AppBehavior
 import com.thumbshade.app.data.EmptyBehavior
+import com.thumbshade.app.data.GestureType
 import com.thumbshade.app.data.KeyboardBehavior
 import com.thumbshade.app.data.LandscapeBehavior
 import com.thumbshade.app.data.SettingsRepo
@@ -93,6 +94,7 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        com.thumbshade.app.access.UsageWatcher.start(this)
         instance = this
         wm = getSystemService(WindowManager::class.java)!!
         // Android can refuse a foreground start (e.g. when the app isn't visible). Don't crash; stop
@@ -127,6 +129,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        com.thumbshade.app.access.UsageWatcher.stop()
         if (instance === this) instance = null
         runCatching { unregisterReceiver(batteryReceiver) }
         removeButton()
@@ -315,6 +318,26 @@ class OverlayService : Service() {
                     GestureFrame.Direction.RIGHT -> mode.right
                 }
                 GestureRunner.run(this@OverlayService, action)
+            }
+
+            private fun mode() = SettingsRepo.current.let { it.modes.getOrNull(it.activeMode) ?: it.modes.first() }
+
+            override fun wheelEnabled() = mode().wheel && mode().wheelSlots.any { it.type != GestureType.NONE }
+
+            override fun onWheelStart() {
+                val c = buttonCenter() ?: return
+                val size = buttonSize() ?: return
+                ActionWheel.show(this@OverlayService, mode(), c.first.toFloat(), c.second.toFloat(), size.first / 2f, size.second / 2f)
+                frame.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            }
+
+            override fun onWheelMove(rawX: Float, rawY: Float) {
+                if (ActionWheel.move(rawX, rawY)) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+
+            override fun onWheelEnd(run: Boolean) {
+                val action = ActionWheel.end()
+                if (run && action != null) GestureRunner.run(this@OverlayService, action)
             }
 
             override fun onDragStart() {
@@ -589,6 +612,12 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         fun onDrag(dx: Float, dy: Float)
         /** [velocityX] in px/s, positive = towards the right. */
         fun onDragEnd(velocityX: Float)
+        /** Wheel mode: the finger left the button, so show the wheel and follow it. */
+        fun wheelEnabled(): Boolean = false
+        fun onWheelStart() {}
+        fun onWheelMove(rawX: Float, rawY: Float) {}
+        /** [run] false when the gesture was cancelled. */
+        fun onWheelEnd(run: Boolean) {}
     }
 
     var listener: Listener? = null
@@ -598,6 +627,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
     private var downY = 0f
     private var moved = false
     private var dragging = false
+    private var wheeling = false
     private var velocity: VelocityTracker? = null
     private val startDrag = Runnable {
         if (!moved) {
@@ -619,6 +649,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 downY = event.rawY
                 moved = false
                 dragging = false
+                wheeling = false
                 postDelayed(startDrag, longPress)
             }
             MotionEvent.ACTION_MOVE -> {
@@ -627,9 +658,16 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 val dy = event.rawY - downY
                 if (dragging) {
                     listener?.onDrag(dx, dy)
+                } else if (wheeling) {
+                    listener?.onWheelMove(event.rawX, event.rawY)
                 } else if (!moved && (abs(dx) > slop || abs(dy) > slop)) {
                     moved = true
                     removeCallbacks(startDrag)
+                    if (listener?.wheelEnabled() == true) {
+                        wheeling = true
+                        listener?.onWheelStart()
+                        listener?.onWheelMove(event.rawX, event.rawY)
+                    }
                 }
             }
             MotionEvent.ACTION_UP -> {
@@ -637,6 +675,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 when {
+                    wheeling -> listener?.onWheelEnd(true)
                     dragging -> {
                         trackRaw(event)
                         val v = velocity
@@ -660,7 +699,9 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(startDrag)
                 if (dragging) listener?.onDragEnd(0f)
+                if (wheeling) listener?.onWheelEnd(false)
                 dragging = false
+                wheeling = false
             }
         }
         return true

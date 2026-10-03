@@ -53,7 +53,18 @@ data class GestureMode(
     val down: GestureAction = GestureAction(GestureType.HIDE_BUTTON),
     val left: GestureAction = GestureAction(GestureType.BACK),
     val right: GestureAction = GestureAction(GestureType.LAST_APP),
-)
+    /** Press and slide opens a wheel of actions instead of the four swipes. */
+    val wheel: Boolean = false,
+    /** Slots of the wheel: 6 in the inner ring, 8 in the middle, 10 in the outer. */
+    val wheelSlots: List<GestureAction> = emptyList(),
+) {
+    fun slot(i: Int): GestureAction = wheelSlots.getOrNull(i) ?: GestureAction()
+
+    companion object {
+        val RINGS = listOf(6, 8, 10)
+        val SLOT_COUNT = RINGS.sum()
+    }
+}
 
 @Serializable
 enum class KeyboardBehavior(val label: String) {
@@ -207,6 +218,11 @@ data class AppSettings(
     val hideOverlayWarning: Boolean = true,
     val lockscreenShade: Boolean = true,
     val openShadeIcon: Boolean = false,
+    /** Reply from the lock-screen shade without unlocking first. */
+    val replyOnLock: Boolean = false,
+    /** On the lock screen, show only which app a notification is from. */
+    val lockHideContent: Boolean = false,
+    val lockDim: Float = 0.7f,
     val savedTexts: List<String> = emptyList(),
 
     // Notifications
@@ -290,6 +306,12 @@ data class AppSettings(
     val dockRight: Boolean = true,
     val modes: List<GestureMode> = listOf(GestureMode()),
     val activeMode: Int = 0,
+
+    // Icons
+    /** Package of the icon pack in use, "" for the apps' own icons. */
+    val iconPack: String = "",
+    /** Per-app icon: "pack:<pack package>/<drawable>" or "file:<name>" in the app's icon folder. */
+    val customIcons: Map<String, String> = emptyMap(),
 
     // Shade
     val shadeMaxHeight: Float = 0.85f,

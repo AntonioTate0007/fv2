@@ -1,5 +1,8 @@
 package com.thumbshade.app.ui
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.heightIn
 import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationManager
@@ -111,6 +114,9 @@ fun GeneralScreen() {
                 notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+        PermissionRow("Usage access", com.thumbshade.app.access.UsageWatcher.hasAccess(context), required = false, "Optional: another way to know which app is open, for the per-app button behaviour, if you'd rather not turn on the accessibility service.") {
+            open(context, Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
         PermissionRow("Accessibility service", access, required = false, "Optional: per-app button, keyboard-aware button, Back/Home/Recents gestures, pasting saved texts, pressing notification buttons. Reads no screen content.") {
             open(context, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
@@ -133,6 +139,13 @@ fun GeneralScreen() {
         }
     }
 
+    Section("Debug messages") {
+        Hint("Show the raw data of the notifications currently in the shade, for troubleshooting.")
+        var debug by remember { mutableStateOf(false) }
+        OutlinedButton(onClick = { debug = true }, modifier = Modifier.fillMaxWidth()) { Text("Open debug messages") }
+        if (debug) DebugDialog { debug = false }
+    }
+
     Section("Service") {
         SwitchRow("Run the service", s.serviceEnabled, "Hosts the button and the shade") { on ->
             SettingsRepo.update { it.copy(serviceEnabled = on) }
@@ -150,12 +163,26 @@ fun GeneralScreen() {
 
     ThemeSection()
 
+    IconsSection()
+
     Section("Lock screen") {
         SwitchRow("Show shade on lock screen", s.lockscreenShade, "Opening the shade while locked shows it over the lock screen") { on ->
             SettingsRepo.update { it.copy(lockscreenShade = on) }
         }
         SwitchRow("Add an \"Open shade\" app icon", s.openShadeIcon, "A second launcher icon that opens the shade. Point your launcher or Tasker / MacroDroid at it.") { on ->
             SettingsRepo.update { it.copy(openShadeIcon = on) }
+        }
+        if (s.lockscreenShade) {
+            SwitchRow("Reply on lock screen", s.replyOnLock, "Reply to messages from the lock-screen shade without unlocking first; when off, replying asks you to unlock first") { on ->
+                SettingsRepo.update { it.copy(replyOnLock = on) }
+            }
+            Text("Lock screen appearance", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+            SwitchRow("Hide notification content", s.lockHideContent, "Show only which app each notification is from until you unlock") { on ->
+                SettingsRepo.update { it.copy(lockHideContent = on) }
+            }
+            SliderRow("Background darkness", s.lockDim, 0f..0.95f, format = { "${(it * 100).toInt()}%" }) { v ->
+                SettingsRepo.update { it.copy(lockDim = v) }
+            }
         }
         Hint("Widgets: long-press your home screen → Widgets → ThumbShade (list, icon strip, count).")
     }
@@ -244,3 +271,49 @@ private fun importBackup(context: Context, uri: Uri) {
     }.onFailure { Effects.toast(context, "That file isn't a ThumbShade backup") }
 }
 
+
+/** Raw extras of every notification in the shade, to copy into a bug report. */
+@Composable
+private fun DebugDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val dump = remember {
+        com.thumbshade.app.notif.NotificationRepo.items.value.joinToString("\n\n") { item ->
+            val n = item.sbn.notification
+            buildString {
+                append("== ").append(item.pkg).append("  ").append(item.key).append('\n')
+                append("channel=").append(item.channelId).append(" importance=").append(item.importance)
+                append(" category=").append(n.category).append(" flags=0x").append(Integer.toHexString(n.flags)).append('\n')
+                append("group=").append(item.groupKey).append(" summary=").append(item.groupSummary)
+                append(" ongoing=").append(item.ongoing).append(" customLayout=").append(item.customView != null).append('\n')
+                n.extras?.let { ex ->
+                    ex.keySet().sorted().forEach { k ->
+                        @Suppress("DEPRECATION")
+                        val v = runCatching { ex.get(k) }.getOrNull()
+                        val text = when (v) {
+                            is Array<*> -> "[" + v.size + " items]"
+                            is CharSequence -> v.toString().take(300)
+                            else -> v?.toString()?.take(120)
+                        }
+                        append(k).append(" = ").append(text).append('\n')
+                    }
+                }
+                append("actions=").append(item.actions.joinToString { it.title })
+            }
+        }.ifBlank { "No notifications in the shade." }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Debug messages") },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 480.dp)) {
+                item {
+                    Text(dump, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { com.thumbshade.app.notif.NotifOps.copy(context, "ThumbShade debug", dump) }) { Text("Copy") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}

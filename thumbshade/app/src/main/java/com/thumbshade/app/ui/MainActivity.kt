@@ -167,15 +167,43 @@ private fun AppRoot(pendingRulePkg: String?, onRulePkgConsumed: () -> Unit) {
 }
 
 /** Shade as an activity: used on the lock screen, and when the overlay can't be shown. */
+/** Lets the lock-screen shade ask for the phone to be unlocked before doing something private. */
+object LockGate {
+    internal var activity: java.lang.ref.WeakReference<Activity>? = null
+
+    fun isLocked(context: android.content.Context): Boolean =
+        context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    /** Runs [block] straight away when unlocked; otherwise asks to unlock first. */
+    fun unlockThen(context: android.content.Context, block: () -> Unit) {
+        val a = activity?.get()
+        val km = context.getSystemService(KeyguardManager::class.java)
+        if (a == null || km == null || !km.isKeyguardLocked) {
+            block()
+            return
+        }
+        km.requestDismissKeyguard(a, object : KeyguardManager.KeyguardDismissCallback() {
+            override fun onDismissSucceeded() = block()
+        })
+    }
+}
+
 class ShadeActivity : ComponentActivity() {
+    override fun onDestroy() {
+        if (LockGate.activity?.get() === this) LockGate.activity = null
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setShowWhenLocked(true)
+        LockGate.activity = java.lang.ref.WeakReference(this)
         val state = MutableTransitionState(false).apply { targetState = true }
         setContent {
             ShadeScreen(
                 visibleState = state,
+                lockScreen = LockGate.isLocked(this),
                 onClose = {
                     state.targetState = false
                     lifecycleScope.launch {

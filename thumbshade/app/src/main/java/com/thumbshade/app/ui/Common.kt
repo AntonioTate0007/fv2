@@ -36,10 +36,12 @@ private val bitmapCache = ConcurrentHashMap<String, ImageBitmap>()
 @Composable
 fun AppIcon(pkg: String, modifier: Modifier = Modifier, colorFilter: ColorFilter? = null) {
     val context = LocalContext.current
-    val bmp = remember(pkg) {
-        bitmapCache[pkg] ?: AppInfoCache.icon(context, pkg)?.let { d ->
+    val iconVersion by com.thumbshade.app.icons.IconStore.version.collectAsState()
+    val bmp = remember(pkg, iconVersion) {
+        val key = "$iconVersion:$pkg"
+        bitmapCache[key] ?: AppInfoCache.icon(context, pkg)?.let { d ->
             runCatching { d.toBitmap(128, 128).asImageBitmap() }.getOrNull()
-        }?.also { bitmapCache[pkg] = it }
+        }?.also { bitmapCache[key] = it }
     }
     if (bmp != null) Image(bitmap = bmp, contentDescription = null, modifier = modifier, colorFilter = colorFilter)
 }

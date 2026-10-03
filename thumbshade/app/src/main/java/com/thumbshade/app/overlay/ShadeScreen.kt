@@ -158,12 +158,16 @@ import kotlin.math.sin
 
 private enum class Panel { NONE, REPLY, SNOOZE, ACTIONS, MENU }
 
+/** True while the shade is shown over the lock screen. */
+private val LocalLockScreen = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
 fun ShadeScreen(
     visibleState: MutableTransitionState<Boolean>,
     onClose: () -> Unit,
     onOpenSettings: () -> Unit,
-) {
+    lockScreen: Boolean = false,
+) = androidx.compose.runtime.CompositionLocalProvider(LocalLockScreen provides lockScreen) {
     ThumbTheme {
         val s by SettingsRepo.state.collectAsState()
         val all by NotificationRepo.items.collectAsState()
@@ -171,7 +175,12 @@ fun ShadeScreen(
         val held by HoldStore.held.collectAsState()
         val entries = remember(all, s) { ShadeFilter.entries(all, s) }
         val dims = s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM || s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR
-        val dim by animateFloatAsState(if (visibleState.targetState && dims) s.dimBehind else 0f, label = "dim")
+        val dimTarget = when {
+            lockScreen -> s.lockDim
+            dims -> s.dimBehind
+            else -> 0f
+        }
+        val dim by animateFloatAsState(if (visibleState.targetState) dimTarget else 0f, label = "dim")
 
         LaunchedEffect(entries.isEmpty(), media == null) {
             if (s.closeWhenEmpty && entries.isEmpty() && media == null && visibleState.currentState) {
@@ -580,6 +589,7 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
     val bodyLines = s.perAppLines[item.pkg] ?: if (c.limitBodyLines) s.bodyMaxLines else Int.MAX_VALUE
+    val lockScreen = LocalLockScreen.current
 
     Column(
         Modifier
@@ -653,7 +663,17 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
             chat && c.hideSenderIfInHeader && c.headerIcon == HeaderIcon.SENDER -> null
             else -> item.largeIcon
         }
+        val hidden = LocalLockScreen.current && s.lockHideContent
         val custom = item.customView.takeIf { c.appLayouts }
+        if (hidden) {
+            Text(
+                "Unlock to see this notification",
+                color = secondary,
+                fontSize = c.bodySp.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            return@Column
+        }
         if (custom != null) AppLayout(item.key + item.postTime, custom)
         else Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
@@ -751,8 +771,11 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                 item.actions.forEach { a ->
                     CardButton(a.title, c, accent) {
                         if (a.isReply) {
-                            replyTo = a
-                            panel = Panel.REPLY
+                            val show = {
+                                replyTo = a
+                                panel = Panel.REPLY
+                            }
+                            if (lockScreen && !s.replyOnLock) com.thumbshade.app.ui.LockGate.unlockThen(context, show) else show()
                         } else {
                             NotifOps.press(context, a)
                         }

@@ -12,7 +12,7 @@ items exist in ThumbShade; the rest are planned.
 - [x] Behaviour in selected apps: as usual / hide / dock / click through
 - [x] No-notifications behaviour: stay / hide / dock
 - [x] Landscape: relative position / keep place / don't show
-- [x] Appear and hide animation (6) with Try it
+- [x] Appear and hide animation: all 38 shade animations, travelling to/from the nearest edge, with Try it
 - [x] New notification animation: pop / hop / wiggle / glow flash, intensity
 - [x] Per-corner radius
 - [x] Background and border colour source: theme / custom / notification / none
@@ -25,18 +25,17 @@ items exist in ThumbShade; the rest are planned.
 - [ ] Charging colour stops, liquid / orbit animations
 - [ ] Icon cluster: arc and half-orbit modes, distance, start/end angles, oldest/newest order, unique icons, tint
 - [ ] Number custom X/Y offset
-- [ ] Action wheel (3 rings)
+- [x] Action wheel (3 rings, follows the button, off-screen slots mirrored)
 
 ## Shade
 - [x] Max height and width, position left / centre / right, newest at the bottom, dim
-- [x] Browsing: list + 9 styles (ferris wheel, coverflow, spotlight, fan, wave, cascade, sway, tumble, helix)
-- [x] Open/close animations: 11
+- [x] Browsing: list + 19 styles (ferris wheel, coverflow, spotlight, fan, wave, cascade, sway, tumble, helix, card stack, book, conveyor, crescent, fly-through, lens, origami, pinch, swirl, swivel)
+- [x] Open/close animations: 38
 - [x] Space between notifications
 - [ ] Separate landscape height, width and position
-- [ ] Remaining browsing styles (book, card stack, conveyor, crescent, flythrough, lens, origami, pinch, swirl, swivel)
-- [ ] Remaining animations (about 25 more)
-- [ ] Push/pull to close distance, swipe distance/speed
-- [ ] Wrap-around scrolling, remember scroll position, start at top/bottom
+- [x] Push/pull to close (rubber band, distance), swipe-to-dismiss distance
+- [x] Wrap-around scrolling, remember scroll position, start at top/bottom
+- [x] Background overlay: none / dim / blur / dim and blur
 - [ ] Keep clear of the navigation bar (auto / custom gap / off)
 - [ ] Editable snooze options ("for a while" / "until a time")
 
@@ -50,6 +49,14 @@ items exist in ThumbShade; the rest are planned.
 ## Other
 - [x] Themes (built-in + your own), Auto, Material You, tab bar position, notification controls
 - [x] Rules engine, templates, widgets, lock-screen shade, backup
-- [ ] Icon packs and custom per-app icons
-- [ ] Reply on lock screen toggle, lock-screen appearance
+- [x] Icon packs and custom per-app icons (from a pack or a picture)
+- [x] Reply on lock screen toggle, lock-screen appearance (hide content, darkness)
+- [x] Screen lighting: 11 border + 13 button effects, played together, per-rule style
+- [x] Apps' own custom notification layouts
+- [x] Media player: shuffle, repeat, stop
+- [x] Gestures: app screens (locked ones marked), shortcuts, custom intents, with Test
+- [x] Animated button icons (17) with a preview gallery
+- [x] Snooze and menu buttons in the card header
+- [x] Usage access as an alternative to the accessibility service
+- [x] Debug messages
 - [ ] Translations

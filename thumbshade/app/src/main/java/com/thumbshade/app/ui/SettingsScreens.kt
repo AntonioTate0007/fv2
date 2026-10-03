@@ -333,15 +333,50 @@ private fun GestureModes(s: AppSettings) {
             }
             TextRow("Mode name", mode.name) { v -> updateMode(index) { it.copy(name = v) } }
             GestureRow("Tap", mode.tap) { a -> updateMode(index) { it.copy(tap = a) } }
-            GestureRow("Swipe up", mode.up) { a -> updateMode(index) { it.copy(up = a) } }
-            GestureRow("Swipe down", mode.down) { a -> updateMode(index) { it.copy(down = a) } }
-            GestureRow("Swipe left", mode.left) { a -> updateMode(index) { it.copy(left = a) } }
-            GestureRow("Swipe right", mode.right) { a -> updateMode(index) { it.copy(right = a) } }
+            SwitchRow("Action wheel instead of swipes", mode.wheel, "Press the button and slide: a wheel of actions opens in three rings around it. Lift on one to run it.") { v ->
+                updateMode(index) { it.copy(wheel = v) }
+            }
+            if (mode.wheel) {
+                WheelSlots(index, mode)
+            } else {
+                GestureRow("Swipe up", mode.up) { a -> updateMode(index) { it.copy(up = a) } }
+                GestureRow("Swipe down", mode.down) { a -> updateMode(index) { it.copy(down = a) } }
+                GestureRow("Swipe left", mode.left) { a -> updateMode(index) { it.copy(left = a) } }
+                GestureRow("Swipe right", mode.right) { a -> updateMode(index) { it.copy(right = a) } }
+            }
         }
         Button(onClick = { edit { it.copy(modes = it.modes + GestureMode(name = "Mode ${it.modes.size + 1}")) } }, modifier = Modifier.fillMaxWidth()) {
             Text("Add mode")
         }
     }
+}
+
+/** The wheel's rings: filled slots plus one empty slot per ring to add another. */
+@Composable
+private fun WheelSlots(modeIndex: Int, mode: GestureMode) {
+    var start = 0
+    GestureMode.RINGS.forEachIndexed { ring, count ->
+        val first = start
+        start += count
+        Text(
+            listOf("Inner ring", "Middle ring", "Outer ring")[ring] + " ($count slots)",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        val filled = (first until first + count).filter { mode.slot(it).type != GestureType.NONE }
+        val nextFree = (first until first + count).firstOrNull { mode.slot(it).type == GestureType.NONE }
+        (filled + listOfNotNull(nextFree)).sorted().forEach { i ->
+            GestureRow(if (i == nextFree) "Add a slot" else "Slot ${i - first + 1}", mode.slot(i)) { a ->
+                updateMode(modeIndex) { m ->
+                    val list = MutableList(GestureMode.SLOT_COUNT) { m.slot(it) }
+                    list[i] = a
+                    m.copy(wheelSlots = list)
+                }
+            }
+        }
+    }
+    Hint("Slots that would fall off the screen move to the other side of the button.")
 }
 
 private fun updateMode(index: Int, transform: (GestureMode) -> GestureMode) = edit { s ->

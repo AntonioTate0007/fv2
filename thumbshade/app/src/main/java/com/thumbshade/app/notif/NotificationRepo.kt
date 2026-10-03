@@ -77,7 +77,10 @@ object AppInfoCache {
         }.getOrDefault(if (pkg == "android") "Android System" else pkg)
     }
 
-    fun icon(context: Context, pkg: String): Drawable? = icons[pkg] ?: runCatching {
+    /** The app's icon, or the icon pack's / your own replacement for it. */
+    fun icon(context: Context, pkg: String): Drawable? = com.thumbshade.app.icons.IconStore.iconFor(context, pkg) ?: originalIcon(context, pkg)
+
+    fun originalIcon(context: Context, pkg: String): Drawable? = icons[pkg] ?: runCatching {
         context.packageManager.getApplicationIcon(pkg)
     }.getOrNull()?.also { icons[pkg] = it }
 

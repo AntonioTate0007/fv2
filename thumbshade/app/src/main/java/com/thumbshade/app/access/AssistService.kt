@@ -90,6 +90,11 @@ class AssistService : AccessibilityService() {
         var instance: AssistService? = null
             private set
 
+        /** Used by [UsageWatcher] while the accessibility service is off. */
+        fun reportForeground(pkg: String) {
+            if (instance == null && _state.value.foregroundPkg != pkg) _state.value = _state.value.copy(foregroundPkg = pkg)
+        }
+
         fun isEnabled(context: Context): Boolean {
             val flat = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
             val me = ComponentName(context, AssistService::class.java)
