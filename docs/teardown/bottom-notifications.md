@@ -1,156 +1,156 @@
 # Teardown: Bottom notifications (`com.bottomnotifications.app`)
 
-Status: **phase 1 — black-box teardown** (public material only).
-Phase 2 (static analysis of the APK) is blocked in the cloud session: the egress
-proxy denies `play.google.com` and every APK mirror. See "Next steps".
+Status: **phase 2: static analysis of the APK done**.
+Input: `base.apk` v2.3.1, extracted from a device (Play-distributed, 5.0 MB, one `classes.dex`).
+The ABI and density splits were not provided, but they hold only resources and native
+libraries; all code is in the base.
+Tools: apktool 2.10.0 (manifest/resources), jadx 1.5.1 (Java).
+The APK itself is **not** committed (copyrighted binary).
 
-Legend: **[O]** observed (README / screenshots) · **[I]** inferred from Android platform
-constraints — must be confirmed against the decompiled APK.
+Legend: **[C]** confirmed in code/manifest · **[O]** observed in README/screenshots ·
+**[I]** still inferred.
 
 ## 1. Identity
 
 | | |
 |---|---|
-| Package | `com.bottomnotifications.app` [O] |
-| Developer | "Vojislav", solo dev, GitHub `vdb86` (Belgrade, per screenshots) [O] |
-| Public repo | `github.com/vdb86/Bottom-notifications` — issue tracker + screenshots only, **no source** [O] |
-| Version | 2.3.1 as of 2026-10-03; the in-app "What's new" lists releases back to 1.9 [O] |
-| Min SDK | Android 10 (API 29) [O] |
-| Monetisation | Free + "Pro" tier (PRO badge, "Bottom notifications Pro — all features available") → Play Billing [O/I] |
-| Network | Claims **no INTERNET permission** [O] → license check must be Play Billing via Play Store IPC (no own backend) [I] |
-| i18n | 50 locales [O] |
+| Package | `com.bottomnotifications.app` [C] |
+| Developer | "Vojislav", GitHub `vdb86` (Belgrade, per screenshots) [O] |
+| Public repo | `github.com/vdb86/Bottom-notifications`: issue tracker + screenshots only, **no source** [O] |
+| Version | 2.3.1 (versionCode 26); the in-app "What's new" lists releases back to 1.9 [O] |
+| SDK | compile/target SDK 36 (Android 16). This APK says `minSdk 32`, but README says Android 10+. Play serves per-device variants, so the 32 is probably this device's variant [C/I] |
+| Language/UI | Kotlin + coroutines; Jetpack Compose (Material 3); Room present [C] |
+| Obfuscation | R8. UI and helpers are flattened into ~3,900 classes in the default package. Components and the whole `notif.rules` package keep real names (needed for JSON and reflection) [C] |
+| Protection | Google **PairIP** license check (`com.pairip.application.Application` calls `LicenseClient.checkLicense()` and then `BnApplication`). License check only; no VM-encrypted classes [C] |
+| Monetisation | One-time in-app purchase, product id **`bottomnotifications_pro`** (type `inapp`), Play Billing Library 9.0.0 [C] |
+| Sister app | Declares `<queries>` for `com.omnideck.app` and can fire its intents (`SHOW_LEFT/RIGHT`, `TOGGLE_POPUP`, `SHOW_APP_INDEX`) as button gestures. Likely the same developer's edge-panel app [C/I] |
 
-## 2. Core concept
+## 2. Privacy claims vs. reality
 
-A floating overlay button (usually bottom of screen) opens a full-height **bottom-anchored
-notification shade** that mirrors the system's active notifications, plus a rules engine
-("notification manager") that silences, holds, batches, or acts on incoming notifications.
-
-## 3. Reconstructed architecture [I]
-
-```
-NotificationListenerService  ──►  NotificationRepository (in-memory StateFlow<List<Item>>)
-   onNotificationPosted/Removed        │            │
-   getActiveNotifications()            │            └─► RulesEngine (evaluate top→bottom on post)
-   snoozeNotification()                │                   actions: cancel / snooze / hold+repost /
-   cancelNotification()                │                            copy OTP / PendingIntent.send /
-   getCurrentRanking() (DND)           │                            RemoteInput reply / TTS / torch / vibrate
-                                       ▼
-Foreground Service ("Run the service") ── WindowManager overlays (TYPE_APPLICATION_OVERLAY)
-   ├─ Floating button view (drag, snap-to-edge, fling, gestures, action wheel, icon cluster)
-   ├─ Shade view (list or "ferris wheel", 36 open/close animations)
-   └─ Screen-lighting overlay (border / button effects)
-AccessibilityService (optional) ── foreground app, IME visibility/bounds, global actions,
-                                   ACTION_PASTE into focused node
-MediaSessionManager.getActiveSessions(listenerComponent) ── built-in media player
-AppWidgetProviders (list widget via RemoteViewsService, icon strip, count) + lock-screen widget
-TileService (QS tile "release held notifications") · exported activity/intent for Tasker/MacroDroid
-```
-
-### Android components to expect in the manifest [I]
-| Component | Evidence |
+| Claim (README) | Finding |
 |---|---|
-| `NotificationListenerService` (`BIND_NOTIFICATION_LISTENER_SERVICE`) | "Notification access — connected and listening" |
-| Foreground service + `SYSTEM_ALERT_WINDOW` | "Display over other apps", "Run the service", persistent overlay notification with "Toggle shade" actions |
-| `AccessibilityService` (`BIND_ACCESSIBILITY_SERVICE`) | Optional; 5 documented uses |
-| `PACKAGE_USAGE_STATS` | "Usage access — optional" (foreground-app fallback without a11y) |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Battery card links dontkillmyapp.com |
-| `TileService` | quick-settings tile |
-| `AppWidgetProvider` ×3 | list / icon-strip / count widgets |
-| Second launcher `activity-alias` | "Add 'Open shade' app icon" |
-| `CAMERA` (torch via `CameraManager.setTorchMode`), `VIBRATE`, `ACCESS_NOTIFICATION_POLICY` (ringer/DND), `READ_CONTACTS` (contact condition), `QUERY_ALL_PACKAGES` (app pickers, icon packs) | rule actions/conditions |
-| `com.android.vending.BILLING` | Pro |
-| `USE_FULL_SCREEN_INTENT`/`TURN_SCREEN_ON`/`WAKE_LOCK` | "new notification lights up the screen"; lock-screen shade |
+| "NO internet access" | **Not literally true.** The manifest declares `INTERNET` and `ACCESS_NETWORK_STATE`, merged in from Play Billing and Google `datatransport` [C] |
+| Notifications never leave the device | **Holds as far as static analysis shows.** The only `HttpURLConnection` in the dex is Google `datatransport` 3.1.8 (CCT backend, log source `PLAY_BILLING_LIBRARY`): Play Billing's own usage telemetry to Google. No app class that touches `StatusBarNotification` calls networking code. No Firebase, Crashlytics, analytics or ad SDKs [C] |
+| Accessibility reads nothing | **Holds.** It listens only for focus, window-state and windows-changed events. It reads the foreground window's package name, whether an IME window (type 2) is present plus its top edge, and whether a focused node is editable. It never calls `getText()` [C] |
 
-## 4. Feature → implementation mapping
+## 3. Manifest (confirmed)
 
-### Shade [O]
-- Settings: max width/height separately for portrait and landscape; sort newest-at-top or
-  at-bottom; background overlay; remember scroll; browsing mode (List / "ferris wheel");
-  push/pull to close; start position top/bottom.
-- Per-element styling: background, border, header (icon, app name, subtitle with sender
-  and conversation title), body (title, text, max lines, large icon, picture), buttons and
-  progress bar, media player tint and album art as background.
-- Rows render from `Notification.extras` (`EXTRA_TITLE`, `EXTRA_TEXT`, `EXTRA_BIG_TEXT`,
-  `EXTRA_MESSAGES` for MessagingStyle, `EXTRA_PICTURE`, `EXTRA_PROGRESS*`,
-  `EXTRA_MEDIA_SESSION`), **not** from `RemoteViews`: that is the only way per-element
-  restyling works [I]. Custom-view notifications (the weather widget in the screenshot)
-  are probably inflated via `contentView/bigContentView.apply()` as a fallback [I].
-- Row actions: swipe dismiss (`cancelNotification(key)`), tap (`contentIntent.send()`),
-  inline reply (`RemoteInput.addResultsToIntent`), snooze (`snoozeNotification(key, ms)`),
-  "Actions" sheet that regex-extracts OTP codes, URLs, and phone numbers from the text.
-- Group by app; "Ungroup grouped notifications" = drop `FLAG_GROUP_SUMMARY` items.
-- Filters: include/exclude apps, top/bottom pinned apps, "show only" / "hide matching"
-  word lists split by `|`, hide items with no time, hide ongoing (`FLAG_ONGOING_EVENT` /
-  `FLAG_FOREGROUND_SERVICE`), DND-aware via `RankingMap.matchesInterruptionFilter()`.
-- Per-app overrides: forced colour and max body lines.
+Permissions: `BIND_NOTIFICATION_LISTENER_SERVICE`, `SYSTEM_ALERT_WINDOW`,
+`FOREGROUND_SERVICE(_SPECIAL_USE)`, `POST_NOTIFICATIONS`, `VIBRATE`, `WAKE_LOCK`,
+`SCHEDULE_EXACT_ALARM`, `ACCESS_NOTIFICATION_POLICY`, `READ_CONTACTS`,
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `QUERY_ALL_PACKAGES`, `PACKAGE_USAGE_STATS`,
+`RECEIVE_BOOT_COMPLETED`, `BILLING`, `CHECK_LICENSE`, `INTERNET`, `ACCESS_NETWORK_STATE`.
+No `CAMERA`: `setTorchMode` doesn't need it.
 
-### Floating button [O]
-- Free-floating or snapped to an edge; separate position when snapped; fling velocity;
-  rotate with screen; landscape behaviour; hide in fullscreen apps; keyboard behaviour;
-  per-app behaviour (all through the a11y service or UsageStats).
-- Appearance: shape (W×H, per-corner radius), background, border, unread count, icon of
-  latest notification, charging ring (`ACTION_BATTERY_CHANGED`), animated music art
-  (Record/Tape/CD/EQ/…).
-- **Notification icon cluster** around the button: line/ring layout, side, direction,
-  distance, icon size, max icons with a "+N" overflow, monochrome option (uses
-  `Notification.smallIcon`).
-- **Gestures**: tap + 4 swipes per "mode"; action wheel with 3 rings. Actions: launch
-  app/shortcut (`LauncherApps`), custom intent with a Test button, last app, assistant,
-  torch, mute, paste saved text, Back/Home/Recents (`performGlobalAction`).
+| Component | Class |
+|---|---|
+| Notification listener | `notif.BnNotificationListener` |
+| Overlay host (FGS `specialUse`) | `overlay.OverlayService`: "Hosts the user-configured floating notification button and the bottom notification shade overlay window" |
+| Accessibility | `access.BnAccessibilityService` (`canRetrieveWindowContent`, `flagRetrieveInteractiveWindows`) |
+| QS tile | `notif.rules.ReleaseTileService`: releases held notifications |
+| Alarms | `notif.rules.RulesAlarmReceiver` (batch times, reminders) |
+| Boot | `overlay.BootReceiver` (BOOT_COMPLETED, MY_PACKAGE_REPLACED, QUICKBOOT) |
+| Widgets | `ShadeWidgetProvider` (+ `ShadeWidgetService` RemoteViews list), `LineWidgetProvider`, `LineWidgetVProvider`, `CountWidgetProvider`; each has a config activity |
+| Lock-screen shade | `overlay.shade.ShadeHostActivity` (`showWhenLocked`, `turnScreenOn`, singleInstance) |
+| "Open shade" launcher icon | `activity-alias OpenShadeAlias` (disabled by default, toggled in settings) |
+| Automation entry | `overlay.shade.ShowShadeActivity` (exported; Tasker/MacroDroid) |
+| Widget helpers | `WidgetReplyActivity`, `WidgetOpenActivity` (transparent, noHistory) |
+| Screens | `OnboardingActivity` (launcher), `MainActivity`, `ThemeEditorActivity`, `AboutActivity`, `WhatsNewActivity`, `LockscreenAppearanceActivity`, `ProPurchaseActivity`, `WidgetManagementActivity` |
 
-### Rules engine [O]
-- Ordered list, drag to reorder, enable toggle, duplicate, delete, 20 templates.
-- **Conditions** (AND/OR, nested groups, invertible): app, words (anywhere / whole word /
-  regex), category, importance, group chat (`EXTRA_IS_GROUP_CONVERSATION`), contact
-  (`EXTRA_PEOPLE_LIST` → Contacts), has picture, has reply action, text length, time
-  windows per weekday, device state (screen on, in call, ringer mode, DND).
-- **Actions**: mute/silence, snooze, dismiss, hold and deliver in a batch (scheduled or
-  hourly), let the first through then quiet the rest, remind later, custom
-  sound/vibration/torch/ringer/TTS, copy OTP to clipboard, press a notification button,
-  reply, open, custom lighting style.
+Broadcast actions: `ACTION_TOGGLE_SHADE`, `ACTION_TOGGLE_HIDE_OVERLAY`, `NEW_RULE_FOR_APP`,
+`RULE_REMINDER`, `WIDGET_ITEM_CLICK`, `LINE_WIDGET_OPEN` (all prefixed
+`com.bottomnotifications.app.`).
 
-How "silence" can work [I]: a listener **cannot** make another app's notification silent
-after the fact. The options are (a) `cancelNotification` and re-show it in the app's own
-quiet channel, (b) `snoozeNotification` and re-post later (this is what "hold/batch" and
-the QS tile's "hand back everything held" suggest), or (c) on API 33+ adjust it as an
-`NotificationAssistantService` (not available to Play apps). Expect (a) and (b) together,
-with the app re-posting held items as its own notifications. **Confirm in the APK.**
+## 4. Architecture (confirmed)
 
-Note: the README says rules can press notification buttons only while the a11y service is
-on. That points to Android 14+ background-activity-launch limits on `PendingIntent.send()`
-from the background; the a11y service grants a BAL exemption [I].
+```
+BnNotificationListener
+  onListenerConnected  → NotificationStore.replaceAll(active, ranking); RuleEngine.onListenerConnected
+                         OverlayWarningHider.sweep(active)
+  onNotificationPosted → OverlayWarningHider.maybeHide()  (drops Android's "displaying over other apps")
+                         NotificationStore.onPosted()      (StateFlow<List<StoredNotification>> → UI/widgets)
+                         RuleEngine.onPosted()             (rules, top→bottom)
+                         edge-lighting trigger
+  onNotificationRemoved→ NotificationStore.onRemoved; RuleEngine.onRemoved(key, reason)
+  onListenerDisconnected → requestRebind() (self-heal)
+  Companion helpers: cancel, cancelAll, snooze(key, ms), snoozedKeys(),
+                     suppressEffects()/clearEffectSuppression(), requestFilter(DND), forceRebind()
+```
 
-### Screen lighting [O]
-Border effects (Basic, Multicolour, Glow, Echo, Neon, Lightning, Rise, Heartbeat, Drip,
-Converge) and button effects (Wave, Bubbles, Fireworks, … Confetti), coloured by the
-notification's `color`, the theme, or a custom colour. This needs a full-screen,
-non-touchable overlay plus a screen wake lock (or `setTurnScreenOn`) [I].
-The 2.3.1 changelog ("fixed taps near the button not reaching the app below while Screen
-lighting or the button's appear and hide animation played") confirms the effects draw in
-an overlay window larger than the button, so that window must be made pass-through
-(`FLAG_NOT_TOUCHABLE`) while an animation plays [O/I].
+`NotificationStore` is a singleton in-memory store. `StoredNotification` and
+`NotificationGroup` are the shade's model. `NotificationRoundTrips` tracks notifications
+the app snoozes and expects to come back, so the shade doesn't flicker or treat them as new.
 
-### Other [O]
-Material You (`dynamicDarkColorScheme`), icon-pack support (ADW/Nova `appfilter.xml`
-intent filters), custom per-app icons, themes, settings export/import (JSON via SAF),
-lock-screen shade (`setShowWhenLocked` activity), debug view showing the raw notification
-extras, and a tab bar with General / Notifications / Button / Shade.
+## 5. How the clever parts actually work
 
-## 5. Probable tech stack [I]
-Kotlin, Jetpack Compose (settings UI style), DataStore or Room for rules and settings,
-WorkManager or AlarmManager for batch delivery, Play Billing. Verify with
-`apkid` and by checking for `androidx.compose` and `kotlinx` packages in the dex.
+### Mute: no re-post. It suppresses system effects for the length of the sound [C]
+A listener can't silence another app's notification, so `MuteController` does this:
+1. Measures the notification's sound (`NotificationSoundDurationKt.computeMuteWindowMs`:
+   1–7 s clamp, 3 s fallback, +300 ms tail).
+2. Opens a **mute window**: `requestListenerHints(HINT_HOST_DISABLE_NOTIFICATION_EFFECTS)`,
+   which makes the system stop notification sound and vibration while the hint is set.
+   Optionally it also opens a short **DND window** (`ZenWindow`, via `requestInterruptionFilter`).
+3. On API 30+, adds a **300 ms "snooze layer"**: the notification is snoozed for 300 ms and
+   comes straight back, which kills any alert already playing. `SnoozeLedger.allowSnooze()`
+   blocks this for notifications that keep bouncing.
+4. A second matching notification during the window extends it. The window is capped at
+   **15 s**, followed by a **30 s cooldown**; then it clears the hint and closes DND.
 
-## 6. Next steps (phase 2 — static analysis)
-1. Pull the APK from a device: `adb shell pm path com.bottomnotifications.app` and
-   `adb pull` each split (base + config splits), or download it from a mirror on an
-   unrestricted network. Commit it to a private branch or drop it in the session.
-2. `apktool d base.apk`: read `AndroidManifest.xml` to confirm section 3 (permissions,
-   services, receivers, `accessibility_service_config.xml`, widget XML).
-3. `jadx -d out base.apk`: locate the `NotificationListenerService` subclass, then follow
-   `onNotificationPosted` → rules evaluation; read how hold, silence and batch are
-   implemented.
-4. Check for INTERNET permission and network libraries to verify the privacy claims.
-5. Extract the rule JSON schema from export/import, which is the best spec for the rules
-   engine.
+### Hold / batch / snooze: built on `snoozeNotification` [C]
+- `BATCH_UNTIL` and `SNOOZE_FOR` call `snoozeNotification(key, ms)` until the next batch time
+  (`RuleBatchMode` `TIMES` or `INTERVAL`; `BatchWindowsKt`, `RuleScheduler`, exact alarms).
+- `SnoozeLedger` records every app-initiated snooze with a `SnoozeReason`
+  (`MUTE`, `SNOOZE_FOR`, `DISMISS_FALLBACK`, `BATCH`, `USER`, `OVERLAY_WARNING`).
+- **Release:** listeners have no "unsnooze" API, so `HeldRelease.releaseAll()` re-snoozes
+  each held key for **10 ms**, and the system re-posts it almost at once. The QS tile and
+  scheduled batch times call this.
+
+### Hiding the "displaying over other apps" warning [C]
+`OverlayWarningHider` matches Android's own `AlertWindowNotification` (package `android`,
+tag/channel naming this app) and snoozes it (`SnoozeReason.OVERLAY_WARNING`). Turning the
+setting off releases it with a 10 ms snooze. This is how the app avoids the permanent
+system notification that every overlay app normally gets.
+
+### Cooldown ("let the first through") [C]
+`CooldownLedger` and `RuleCooldownMatch`/`RuleCooldownBehavior` (`MUTE` | `DISMISS`): after
+the first match, later matches within the window are muted or dismissed.
+
+## 6. Rules engine model (confirmed)
+
+- **Actions** (`RuleActionType`): `MUTE`, `SNOOZE_FOR`, `DISMISS`, `PRESS_BUTTON`, `OPEN`,
+  `REPLY`, `CUSTOM_ALERT` (`AlertPlayer`: sound and vibration), `BATCH_UNTIL`, `REMINDER`,
+  `TORCH` (`TorchController`), `SET_RINGER` (`RingerController`), `SPEAK` (`SpeechPlayer`,
+  TTS), `COOLDOWN`, `SET_DND` (`DndController`), `COPY_TEXT` (`ClipboardCopier`, OTP),
+  `EDGE_LIGHT`.
+- **Conditions** (`RuleConditionType`): `TEXT_CONTAINS`, `TEXT_NOT_CONTAINS`, `TEXT_REGEX`,
+  `CATEGORY`, `IMPORTANCE_RANGE`, `FLAGS`, `TIME_WINDOW`, `TEXT_LENGTH`, `DEVICE_STATE`.
+  They live in an AND/OR tree (`RuleGroup`/`RuleNode`, `not` flag).
+- **Categories** (`RuleCategory`, the app's own classifier): CALL, MESSAGE, EMAIL, SOCIAL,
+  EVENT, REMINDER, ALARM, PROMO, PROGRESS, TRANSPORT, NAVIGATION, MISSED_CALL, SYSTEM,
+  SERVICE, ERROR, STATUS, RECOMMENDATION, WORKOUT, STOPWATCH.
+- **Device state** (`RuleDeviceAspect`): SCREEN, CALL (`CallGuard`), DND, RINGER, MIC.
+- **Contact matching:** `READ_CONTACTS` + `ContactResult`.
+- **Delayed dismiss** (`DelayedDismiss`) and **reminders** (`ReminderCommand`, alarm).
+- `RuleLog` keeps an in-app log of what each rule did.
+- **Serialization** (`RuleJsonKt`) uses compact keys, which is the export/import format:
+  `root, kids, conds, acts, apps, apps_ex, match, not, en, name, ord, re, rg, t, w, ww, wm,
+  tm, td, ts, te, imin, imax, cat, dev, snd, vib, sl, dnd, cd, cdm, cdb, bm, bi, bt, btn,
+  msg, dly, rm, rr, el*, …`.
+
+## 7. Overlays and accessibility [C]
+- `OverlayService` is a `specialUse` foreground service. It owns the
+  `TYPE_APPLICATION_OVERLAY` windows for the button, the shade and the lighting effects
+  (built with `WindowManager.LayoutParams` in several obfuscated UI classes).
+- The accessibility service publishes `(foregroundPackage, keyboardVisible, keyboardTop)`.
+  On window changes it re-checks after 100/300/600/1000 ms, and after 50/200/500/900 ms when
+  an editable field gains focus. The button logic uses this for per-app and keyboard
+  behaviour. Global actions (Back/Home/Recents), paste, and pressing notification buttons
+  go through the same service.
+
+## 8. What's left / ideas
+- The Compose UI is fully obfuscated. Mapping screens to classes is possible but slow, and
+  the screenshots already document the UI.
+- The rule JSON schema (section 6) is enough to write rules outside the app and import them.
+- To build a similar app, the reusable techniques are: mute through listener hints, release
+  through a 10 ms re-snooze, hiding the overlay warning through a snooze, and a
+  `specialUse` FGS that hosts the overlays.
