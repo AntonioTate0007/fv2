@@ -183,6 +183,14 @@ fun GeneralScreen() {
     }
 
     Section("About") {
+        val version = remember {
+            runCatching {
+                val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                @Suppress("DEPRECATION")
+                "Version ${info.versionName} (build ${info.versionCode})"
+            }.getOrDefault("")
+        }
+        Text(version, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         Hint("ThumbShade: notifications at the bottom of the screen, where your thumb is. Everything is free and stays on your phone; the app has no internet permission.")
     }
 }
