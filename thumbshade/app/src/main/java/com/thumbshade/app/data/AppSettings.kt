@@ -270,6 +270,10 @@ data class AppSettings(
     val numberHideSingle: Boolean = false,
     val numberAlign: NumberAlign = NumberAlign.CENTER,
     val showLatestIcon: Boolean = false,
+    /** Show the sender's picture in the middle of the button when the newest notification has one. */
+    val contactPhoto: Boolean = true,
+    /** A small app icon on the corner of that picture. */
+    val contactPhotoBadge: Boolean = true,
     val mediaLook: MediaLook = MediaLook.ALBUM_ART,
     val mediaOnlyPlaying: Boolean = true,
     val mediaDimPercent: Int = 0,

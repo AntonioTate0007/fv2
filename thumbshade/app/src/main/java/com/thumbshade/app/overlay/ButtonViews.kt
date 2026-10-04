@@ -100,6 +100,13 @@ fun ButtonFace(
     val context = LocalContext.current
     val visible = remember(all, s) { ShadeFilter.visible(all, s) }
     val latest = visible.maxByOrNull { it.postTime }
+    // The sender's picture for the newest notification (chat apps attach one; Contacts may have one).
+    val contactPhoto by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, latest?.key, latest?.postTime, s.contactPhoto) {
+        val item = latest
+        value = if (!s.contactPhoto || item == null) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.thumbshade.app.notif.ContactPhotos.forItem(context, item)?.asImageBitmap()
+        }
+    }
     val theme = Themes.resolve(s, isSystemInDarkTheme())
     val accent = Color(currentAccent(context, s))
     val dockedLook = docked && s.dockedLook
@@ -227,11 +234,21 @@ fun ButtonFace(
                     val showMedia = s.mediaLook != MediaLook.NOTHING && m != null && (m.playing || !s.mediaOnlyPlaying)
                     when {
                         showMedia && m != null -> MediaFace(m, s.mediaLook, Color(s.mediaAnimColor), s.mediaDimPercent)
+                        contactPhoto != null && latest != null -> Box(Modifier.fillMaxSize()) {
+                            androidx.compose.foundation.Image(
+                                contactPhoto!!, "Sender",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().padding(3.dp).clip(CircleShape),
+                            )
+                            if (s.contactPhotoBadge) {
+                                AppIcon(latest.pkg, Modifier.align(Alignment.BottomEnd).fillMaxSize(0.36f).clip(CircleShape))
+                            }
+                        }
                         s.showLatestIcon && latest != null -> AppIcon(latest.pkg, Modifier.fillMaxSize().padding(10.dp))
                     }
                     val showNumber = s.showCount && visible.isNotEmpty() && !(s.numberHideSingle && visible.size == 1)
                     if (showNumber) {
-                        val covered = showMedia || (s.showLatestIcon && latest != null)
+                        val covered = showMedia || contactPhoto != null || (s.showLatestIcon && latest != null)
                         val align = when (s.numberAlign) {
                             NumberAlign.CENTER -> if (covered) Alignment.BottomEnd else Alignment.Center
                             NumberAlign.TOP_START -> Alignment.TopStart

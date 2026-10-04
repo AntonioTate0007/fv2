@@ -263,6 +263,14 @@ fun ButtonScreen() {
         }
         SliderRow("Whole-button opacity", s.buttonAlpha, 0.2f..1f, format = { "${(it * 100).roundToInt()}%" }) { v -> edit { it.copy(buttonAlpha = v) } }
         SwitchRow("Show icon of the latest notification", s.showLatestIcon) { v -> edit { it.copy(showLatestIcon = v) } }
+        SwitchRow(
+            "Show the sender's picture", s.contactPhoto,
+            "When the newest notification is from someone with a picture (from the chat app or your contacts), show it in the middle of the button",
+        ) { v -> edit { it.copy(contactPhoto = v) } }
+        if (s.contactPhoto) {
+            SwitchRow("App badge on the picture", s.contactPhotoBadge) { v -> edit { it.copy(contactPhotoBadge = v) } }
+            Hint("Allow Contacts on the General tab to use the photos saved in your contacts too.")
+        }
     }
 
     Section("Number on button") {
