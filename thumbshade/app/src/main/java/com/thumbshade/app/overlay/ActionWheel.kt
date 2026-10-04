@@ -133,7 +133,7 @@ object ActionWheel {
 }
 
 private fun shortLabel(context: Context, a: GestureAction): String = when (a.type) {
-    GestureType.OPEN_APP -> AppInfoCache.label(context, a.arg)
+    GestureType.OPEN_APP, GestureType.OPEN_APP_NOTIFICATION -> AppInfoCache.label(context, a.arg)
     GestureType.PASTE_TEXT -> "\"" + a.arg.take(12) + "\""
     else -> a.label.ifBlank { a.type.label }
 }
@@ -175,6 +175,18 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
                 ) {
                     if (sl.action.type == GestureType.OPEN_APP) {
                         AppIcon(sl.action.arg, Modifier.size(34.dp))
+                    } else if (sl.action.type == GestureType.OPEN_APP_NOTIFICATION) {
+                        Box(Modifier.size(34.dp)) {
+                            AppIcon(sl.action.arg, Modifier.size(34.dp))
+                            // A dot: this one opens its newest notification.
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(11.dp)
+                                    .background(MaterialTheme.colorScheme.error, CircleShape)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                            )
+                        }
                     } else {
                         Text(
                             shortLabel(context, sl.action),

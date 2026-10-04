@@ -28,6 +28,11 @@ object GestureRunner {
                 if (latest != null) NotifOps.open(context, latest) else Effects.toast(context, "No notifications")
             }
             GestureType.OPEN_APP -> launch(context, action.arg)
+            GestureType.OPEN_APP_NOTIFICATION -> {
+                // Straight into the newest notification (the chat, the email…), else just the app.
+                val newest = NotificationRepo.items.value.filter { it.pkg == action.arg }.maxByOrNull { it.postTime }
+                if (newest != null) NotifOps.open(context, newest) else launch(context, action.arg)
+            }
             GestureType.APP_SCREEN, GestureType.SHORTCUT, GestureType.CUSTOM_INTENT -> fire(context, action.type, action.arg)
             GestureType.BACK -> global(context, AccessibilityService.GLOBAL_ACTION_BACK)
             GestureType.HOME -> global(context, AccessibilityService.GLOBAL_ACTION_HOME)

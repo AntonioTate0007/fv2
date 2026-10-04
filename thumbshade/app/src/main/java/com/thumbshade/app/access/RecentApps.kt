@@ -11,6 +11,37 @@ import com.thumbshade.app.notif.NotificationRepo
  * (needs Usage access), then apps with notifications waiting.
  */
 object RecentApps {
+    /** Apps with notifications waiting, newest notification first. */
+    fun withNotifications(context: Context, max: Int): List<String> {
+        val s = SettingsRepo.current
+        val own = context.packageName
+        val current = AssistService.state.value.foregroundPkg
+        return com.thumbshade.app.notif.ShadeFilter.visible(NotificationRepo.items.value, s)
+            .sortedByDescending { it.postTime }
+            .map { it.pkg }
+            .distinct()
+            .filter { it != own && it != current }
+            .take(max)
+    }
+
+    /** What the long-press switcher shows, by the user's choice. */
+    fun forSwitcher(context: Context, max: Int): List<com.thumbshade.app.data.GestureAction> {
+        fun notif(pkg: String) = com.thumbshade.app.data.GestureAction(com.thumbshade.app.data.GestureType.OPEN_APP_NOTIFICATION, pkg)
+        fun app(pkg: String) = com.thumbshade.app.data.GestureAction(com.thumbshade.app.data.GestureType.OPEN_APP, pkg)
+        return when (SettingsRepo.current.switcherSource) {
+            com.thumbshade.app.data.SwitcherSource.RECENT_APPS -> list(context, max).map(::app)
+            com.thumbshade.app.data.SwitcherSource.NOTIFICATIONS -> withNotifications(context, max).map(::notif)
+            com.thumbshade.app.data.SwitcherSource.BOTH -> {
+                // Notification apps fill the inner ring (nearest the thumb); recent apps go outside.
+                val inner = com.thumbshade.app.data.GestureMode.RINGS.first()
+                val notifs = withNotifications(context, minOf(inner, max))
+                val recent = list(context, max).filterNot { it in notifs }
+                val padded = notifs.map(::notif) + List(if (recent.isNotEmpty() && notifs.isNotEmpty()) inner - notifs.size else 0) { com.thumbshade.app.data.GestureAction() }
+                (padded + recent.take((max - notifs.size).coerceAtLeast(0)).map(::app))
+            }
+        }
+    }
+
     fun list(context: Context, max: Int): List<String> {
         val pm = context.packageManager
         val own = context.packageName

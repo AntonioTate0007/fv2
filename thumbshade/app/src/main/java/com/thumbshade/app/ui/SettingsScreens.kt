@@ -352,6 +352,8 @@ fun ButtonScreen() {
                 if (s.moveGesture == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Move the button with double-tap and hold."
                 else "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Keep holding still to move the button instead."
             )
+            ChoiceRow("Show in the switcher", com.thumbshade.app.data.SwitcherSource.entries, s.switcherSource, { it.label }) { v -> edit { it.copy(switcherSource = v) } }
+            Hint("Apps with notifications have a dot; picking one opens its newest notification, straight into the chat or email.")
             SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
             AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
             val tickCtx = LocalContext.current
@@ -471,11 +473,13 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
     var pickApp by remember { mutableStateOf(false) }
     var pickText by remember { mutableStateOf(false) }
     var pickScreenApp by remember { mutableStateOf(false) }
+    var pickNotifApp by remember { mutableStateOf(false) }
     var screenApp by remember { mutableStateOf<String?>(null) }
     var pickShortcut by remember { mutableStateOf(false) }
     var editIntent by remember { mutableStateOf(false) }
     val label = when (action.type) {
         GestureType.OPEN_APP -> "Open " + AppInfoCache.label(context, action.arg)
+        GestureType.OPEN_APP_NOTIFICATION -> AppInfoCache.label(context, action.arg) + "'s newest notification"
         GestureType.APP_SCREEN, GestureType.SHORTCUT, GestureType.CUSTOM_INTENT -> action.label.ifBlank { action.type.label }
         GestureType.PASTE_TEXT -> "Paste \"" + action.arg.take(20) + "\""
         else -> action.type.label
@@ -505,6 +509,7 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
                                     choosing = false
                                     when (t) {
                                         GestureType.OPEN_APP -> pickApp = true
+                                        GestureType.OPEN_APP_NOTIFICATION -> pickNotifApp = true
                                         GestureType.PASTE_TEXT -> pickText = true
                                         GestureType.APP_SCREEN -> pickScreenApp = true
                                         GestureType.SHORTCUT -> pickShortcut = true
@@ -520,6 +525,12 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
             },
             confirmButton = { TextButton(onClick = { choosing = false }) { Text("Close") } },
         )
+    }
+    if (pickNotifApp) {
+        AppPickerDialog("Which app's notifications?", emptySet(), single = true, onDismiss = { pickNotifApp = false }) { chosen ->
+            pickNotifApp = false
+            chosen.firstOrNull()?.let { onChange(GestureAction(GestureType.OPEN_APP_NOTIFICATION, it)) }
+        }
     }
     if (pickApp) {
         AppPickerDialog("Open which app?", emptySet(), single = true, onDismiss = { pickApp = false }) { chosen ->

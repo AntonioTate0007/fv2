@@ -14,6 +14,7 @@ enum class GestureType(val label: String) {
     TOGGLE_SHADE("Open / close the shade"),
     OPEN_LATEST("Open the newest notification"),
     OPEN_APP("Open an app"),
+    OPEN_APP_NOTIFICATION("Open an app's newest notification"),
     APP_SCREEN("Open an app screen"),
     SHORTCUT("Run a shortcut"),
     CUSTOM_INTENT("Send a custom intent"),
@@ -172,6 +173,13 @@ enum class MoveGesture(val label: String) {
     SUPER_LONG_HOLD("Super long hold"),
     DOUBLE_TAP_HOLD("Double-tap and hold"),
     LONG_PRESS("Long press"),
+}
+
+@Serializable
+enum class SwitcherSource(val label: String) {
+    RECENT_APPS("Recently used apps"),
+    NOTIFICATIONS("Apps with notifications (newest first)"),
+    BOTH("Both: notifications inside, recent apps outside"),
 }
 
 @Serializable
@@ -341,6 +349,7 @@ data class AppSettings(
     /** Long press and hold on the button. */
     val longPressAction: LongPressAction = LongPressAction.APP_SWITCHER,
     val switcherCount: Int = 8,
+    val switcherSource: SwitcherSource = SwitcherSource.BOTH,
     /** How you pick the button up to move it. */
     val moveGesture: MoveGesture = MoveGesture.SUPER_LONG_HOLD,
     /** Super long hold: how much longer than a long press to keep holding. */

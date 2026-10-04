@@ -357,15 +357,15 @@ class OverlayService : Service() {
                 val c = buttonCenter() ?: return
                 val size = buttonSize() ?: return
                 val st = SettingsRepo.current
-                val apps = com.thumbshade.app.access.RecentApps.list(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
-                if (apps.isEmpty()) {
+                val apps = com.thumbshade.app.access.RecentApps.forSwitcher(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
+                if (apps.none { it.type != GestureType.NONE }) {
                     // Nothing to switch to: still let the icons fall out on release.
                     switcherOpen = true
                     return
                 }
                 ActionWheel.show(
                     this@OverlayService,
-                    apps.map { com.thumbshade.app.data.GestureAction(GestureType.OPEN_APP, it) },
+                    apps,
                     c.first.toFloat(), c.second.toFloat(), size.first / 2f, size.second / 2f,
                 )
                 ScrollSounds.prepare(this@OverlayService, st.switcherSound)
