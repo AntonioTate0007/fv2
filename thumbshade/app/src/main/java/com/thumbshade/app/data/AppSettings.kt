@@ -166,6 +166,12 @@ enum class BrowseStyle(val label: String) {
 }
 
 @Serializable
+enum class LongPressAction(val label: String) {
+    APP_SWITCHER("Open the app switcher"),
+    MOVE("Move the button"),
+}
+
+@Serializable
 enum class TickSound(val label: String) {
     NONE("None"), SYSTEM("System click"), TICK("Tick"), SOFT("Soft tap"), WOOD("Wood block"), POP("Pop"),
     BUBBLE("Bubble"), KEYBOARD("Keyboard"), TYPEWRITER("Typewriter"), GLASS("Glass"), RATCHET("Ratchet"),
@@ -320,6 +326,10 @@ data class AppSettings(
     val buttonDocked: Boolean = true,
     val dockRight: Boolean = true,
     val modes: List<GestureMode> = listOf(GestureMode()),
+    /** Long press and hold on the button. */
+    val longPressAction: LongPressAction = LongPressAction.APP_SWITCHER,
+    val switcherCount: Int = 8,
+    val switcherFavorites: Set<String> = emptySet(),
     val activeMode: Int = 0,
 
     val ai: AiSettings = AiSettings(),

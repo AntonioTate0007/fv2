@@ -60,14 +60,18 @@ object ActionWheel {
     private var hitRadius = 0f
 
     /** Lays out the slots around a button centred at ([cx], [cy]) with half sizes [hw] × [hh]. */
-    fun layout(mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float, density: Float, screenW: Float, screenH: Float): List<Slot> {
+    fun layout(mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float, density: Float, screenW: Float, screenH: Float): List<Slot> =
+        layout(List(GestureMode.SLOT_COUNT) { mode.slot(it) }, cx, cy, hw, hh, density, screenW, screenH)
+
+    /** [actions] fill the inner ring first, then the middle and outer; NONE leaves a gap. */
+    fun layout(actions: List<GestureAction>, cx: Float, cy: Float, hw: Float, hh: Float, density: Float, screenW: Float, screenH: Float): List<Slot> {
         val margin = 30f * density
         val out = mutableListOf<Slot>()
         var index = 0
         GestureMode.RINGS.forEachIndexed { ring, count ->
             val gap = (56f + ring * 60f) * density
             for (k in 0 until count) {
-                val action = mode.slot(index++)
+                val action = actions.getOrNull(index++) ?: GestureAction()
                 if (action.type == GestureType.NONE) continue
                 // Start at the top and go round; offset alternate rings so slots don't line up.
                 val a = (-Math.PI / 2 + (k + if (ring % 2 == 1) 0.5 else 0.0) * 2 * Math.PI / count).toFloat()
@@ -81,11 +85,16 @@ object ActionWheel {
         return out
     }
 
-    fun show(context: Context, mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float) {
+    fun show(context: Context, mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float) =
+        show(context, List(GestureMode.SLOT_COUNT) { mode.slot(it) }, cx, cy, hw, hh)
+
+    /** Opens the wheel with [actions]; the slots fold out from the button one after another. */
+    fun show(context: Context, actions: List<GestureAction>, cx: Float, cy: Float, hw: Float, hh: Float) {
         end()
         val wm = context.getSystemService(WindowManager::class.java) ?: return
         val d = context.resources.displayMetrics
-        slots = layout(mode, cx, cy, hw, hh, d.density, d.widthPixels.toFloat(), d.heightPixels.toFloat())
+        slots = layout(actions, cx, cy, hw, hh, d.density, d.widthPixels.toFloat(), d.heightPixels.toFloat())
+        if (slots.isEmpty()) return
         hitRadius = 34f * d.density
         selected.intValue = -1
         val params = OverlayWindows.params(
@@ -135,11 +144,11 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
         val context = LocalContext.current
         val accent = Color(currentAccent(context, SettingsRepo.current))
         val open = remember { Animatable(0f) }
-        LaunchedEffect(Unit) { open.animateTo(1f, tween(160)) }
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = open.value }) {
+        LaunchedEffect(Unit) { open.animateTo(1f, tween(380)) }
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = (open.value * 3f).coerceAtMost(1f) }) {
             Canvas(Modifier.fillMaxSize()) {
                 // Faint guide lines from the button to each slot.
-                slots.forEachIndexed { i, sl ->
+                if (open.value >= 1f) slots.forEachIndexed { i, sl ->
                     drawLine(accent.copy(alpha = if (i == selected) 0.7f else 0.15f), center, Offset(sl.x, sl.y), if (i == selected) 4f else 2f)
                 }
                 drawCircle(accent.copy(alpha = 0.25f), radius = 14f, center = center, style = Stroke(3f))
@@ -147,11 +156,18 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
             slots.forEachIndexed { i, sl ->
                 val on = i == selected
                 val sizeDp = 60.dp
+                // Fold out: each slot travels from the button to its place, a little after the one before.
+                val p = ((open.value * 1.6f) - i * 0.6f / slots.size.coerceAtLeast(1)).coerceIn(0f, 1f).let { 1f - (1f - it) * (1f - it) }
                 Box(
                     Modifier
-                        .offset { IntOffset((sl.x - sizeDp.toPx() / 2).toInt(), (sl.y - sizeDp.toPx() / 2).toInt()) }
+                        .offset {
+                            val x = center.x + (sl.x - center.x) * p
+                            val y = center.y + (sl.y - center.y) * p
+                            IntOffset((x - sizeDp.toPx() / 2).toInt(), (y - sizeDp.toPx() / 2).toInt())
+                        }
                         .size(sizeDp)
-                        .scale(open.value * if (on) 1.18f else 1f)
+                        .graphicsLayer { alpha = p }
+                        .scale((0.4f + 0.6f * p) * if (on) 1.18f else 1f)
                         .background(if (on) accent else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f), CircleShape)
                         .border(1.5.dp, accent.copy(alpha = 0.6f), CircleShape)
                         .padding(6.dp),

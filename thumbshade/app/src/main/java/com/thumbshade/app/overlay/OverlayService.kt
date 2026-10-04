@@ -326,6 +326,26 @@ class OverlayService : Service() {
 
             override fun wheelEnabled() = mode().wheel && mode().wheelSlots.any { it.type != GestureType.NONE }
 
+            override fun switcherEnabled() = SettingsRepo.current.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER
+
+            override fun onSwitcherStart() {
+                val c = buttonCenter() ?: return
+                val size = buttonSize() ?: return
+                val st = SettingsRepo.current
+                val apps = com.thumbshade.app.access.RecentApps.list(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
+                if (apps.isEmpty()) {
+                    com.thumbshade.app.rules.Effects.toast(this@OverlayService, "No recent apps yet. Allow Usage access for ThumbShade.")
+                    return
+                }
+                ActionWheel.show(
+                    this@OverlayService,
+                    apps.map { com.thumbshade.app.data.GestureAction(GestureType.OPEN_APP, it) },
+                    c.first.toFloat(), c.second.toFloat(), size.first / 2f, size.second / 2f,
+                )
+                ScrollSounds.prepare(this@OverlayService, st.scrollSound)
+                frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            }
+
             override fun onWheelStart() {
                 val c = buttonCenter() ?: return
                 val size = buttonSize() ?: return
@@ -612,6 +632,10 @@ class OverlayService : Service() {
 
 /** Turns raw touches into tap, swipe and long-press-then-drag, using screen coordinates. */
 class GestureFrame(context: Context) : FrameLayout(context) {
+    companion object {
+        const val MOVE_AFTER_MS = 1000L
+    }
+
     enum class Direction { UP, DOWN, LEFT, RIGHT }
 
     interface Listener {
@@ -627,6 +651,9 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         fun onWheelMove(rawX: Float, rawY: Float) {}
         /** [run] false when the gesture was cancelled. */
         fun onWheelEnd(run: Boolean) {}
+        /** Long press opens the app switcher instead of moving the button. */
+        fun switcherEnabled(): Boolean = false
+        fun onSwitcherStart() {}
     }
 
     var listener: Listener? = null
@@ -639,11 +666,33 @@ class GestureFrame(context: Context) : FrameLayout(context) {
     private var wheeling = false
     private var velocity: VelocityTracker? = null
     private val startDrag = Runnable {
-        if (!moved) {
+        if (moved) return@Runnable
+        if (listener?.switcherEnabled() == true) {
+            // Long press: the switcher folds out and the finger picks an app, like the wheel.
+            wheeling = true
+            switcherAt = Pair(lastX, lastY)
+            listener?.onSwitcherStart()
+            postDelayed(switchToMove, MOVE_AFTER_MS)
+        } else {
             dragging = true
             listener?.onDragStart()
         }
     }
+    /** Holding still on the switcher a while longer means "move the button" instead. */
+    private val switchToMove = Runnable {
+        if (!wheeling) return@Runnable
+        val (x, y) = switcherAt ?: return@Runnable
+        if (abs(lastX - x) > slop || abs(lastY - y) > slop) return@Runnable
+        listener?.onWheelEnd(false)
+        wheeling = false
+        dragging = true
+        downX = lastX
+        downY = lastY
+        listener?.onDragStart()
+    }
+    private var switcherAt: Pair<Float, Float>? = null
+    private var lastX = 0f
+    private var lastY = 0f
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = true
 
@@ -656,6 +705,9 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 trackRaw(event)
                 downX = event.rawX
                 downY = event.rawY
+                lastX = downX
+                lastY = downY
+                switcherAt = null
                 moved = false
                 dragging = false
                 wheeling = false
@@ -663,6 +715,8 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 trackRaw(event)
+                lastX = event.rawX
+                lastY = event.rawY
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 if (dragging) {
@@ -681,6 +735,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(startDrag)
+                removeCallbacks(switchToMove)
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 when {
@@ -707,6 +762,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(startDrag)
+                removeCallbacks(switchToMove)
                 if (dragging) listener?.onDragEnd(0f)
                 if (wheeling) listener?.onWheelEnd(false)
                 dragging = false

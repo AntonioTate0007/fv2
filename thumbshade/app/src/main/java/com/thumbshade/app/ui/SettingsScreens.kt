@@ -327,6 +327,20 @@ fun ButtonScreen() {
         }
     }
 
+    Section("Long press") {
+        ChoiceRow("Long press and hold", com.thumbshade.app.data.LongPressAction.entries, s.longPressAction, { it.label }) { v -> edit { it.copy(longPressAction = v) } }
+        if (s.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER) {
+            Hint("Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. To move the button, keep holding still for another second.")
+            SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
+            AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
+            if (!com.thumbshade.app.access.UsageWatcher.hasAccess(LocalContext.current)) {
+                Hint("Allow Usage access on the General tab so the switcher can show the apps you used last. Until then it shows your favourites and apps with notifications.")
+            }
+        } else {
+            Hint("Hold the button, then drag it where you want it.")
+        }
+    }
+
     GestureModes(s)
 }
 
