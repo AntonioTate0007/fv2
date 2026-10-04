@@ -168,6 +168,13 @@ enum class BrowseStyle(val label: String) {
 }
 
 @Serializable
+enum class MoveGesture(val label: String) {
+    SUPER_LONG_HOLD("Super long hold"),
+    DOUBLE_TAP_HOLD("Double-tap and hold"),
+    LONG_PRESS("Long press"),
+}
+
+@Serializable
 enum class LongPressAction(val label: String) {
     APP_SWITCHER("Open the app switcher"),
     MOVE("Move the button"),
@@ -334,8 +341,10 @@ data class AppSettings(
     /** Long press and hold on the button. */
     val longPressAction: LongPressAction = LongPressAction.APP_SWITCHER,
     val switcherCount: Int = 8,
-    /** Move the button with double-tap-and-hold (instead of long press). */
-    val doubleTapHoldMove: Boolean = true,
+    /** How you pick the button up to move it. */
+    val moveGesture: MoveGesture = MoveGesture.SUPER_LONG_HOLD,
+    /** Super long hold: how much longer than a long press to keep holding. */
+    val moveHoldMs: Int = 1500,
     val switcherFavorites: Set<String> = emptySet(),
     /** Vibrate when the switcher opens, on each app you slide over, and when you pick one. */
     val switcherVibration: Boolean = true,

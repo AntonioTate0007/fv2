@@ -337,7 +337,16 @@ class OverlayService : Service() {
 
             override fun switcherEnabled() = SettingsRepo.current.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER
 
-            override fun doubleTapHoldMoves() = SettingsRepo.current.doubleTapHoldMove
+            override fun moveGesture(): com.thumbshade.app.data.MoveGesture {
+                val st = SettingsRepo.current
+                return if (st.longPressAction == com.thumbshade.app.data.LongPressAction.MOVE) com.thumbshade.app.data.MoveGesture.LONG_PRESS else st.moveGesture
+            }
+
+            override fun moveHoldMs() = SettingsRepo.current.moveHoldMs.toLong()
+
+            override fun onMoveArmed() {
+                Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, SettingsRepo.current.switcherVibrationStrength.coerceAtLeast(0.6f))
+            }
 
             override fun onDoubleTap() {
                 val a = mode().doubleTap
@@ -755,8 +764,13 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         /** Long press opens the app switcher instead of moving the button. */
         fun switcherEnabled(): Boolean = false
         fun onSwitcherStart() {}
-        /** Moving is done by double-tap-and-hold (otherwise by long press). */
-        fun doubleTapHoldMoves(): Boolean = false
+        /** How the button is picked up to move. */
+        fun moveGesture(): com.thumbshade.app.data.MoveGesture = com.thumbshade.app.data.MoveGesture.LONG_PRESS
+        fun doubleTapHoldMoves(): Boolean = moveGesture() == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD
+        /** Super long hold: extra time after the long press. */
+        fun moveHoldMs(): Long = 1500
+        /** The hold was long enough: the button is about to follow the finger. */
+        fun onMoveArmed() {}
         fun onDoubleTap() { onTap() }
     }
 
@@ -788,15 +802,19 @@ class GestureFrame(context: Context) : FrameLayout(context) {
     }
     private val startDrag = Runnable {
         if (moved) return@Runnable
-        val doubleTapMoves = listener?.doubleTapHoldMoves() == true
+        val gesture = listener?.moveGesture()
+        val superHold = listener?.moveHoldMs() ?: MOVE_AFTER_MS
         if (listener?.switcherEnabled() == true) {
             // Long press: the switcher folds out and the finger picks an app, like the wheel.
             wheeling = true
             switcherAt = Pair(lastX, lastY)
             listener?.onSwitcherStart()
-            // Without double-tap-and-hold, holding still a while longer moves the button instead.
-            if (!doubleTapMoves) postDelayed(switchToMove, MOVE_AFTER_MS)
-        } else if (doubleTapMoves) {
+            // Super long hold: keep holding still and the switcher gives way to moving the button.
+            if (gesture != com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) postDelayed(switchToMove, superHold)
+        } else if (gesture == com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD) {
+            switcherAt = Pair(lastX, lastY)
+            postDelayed(superMove, superHold)
+        } else if (gesture == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) {
             // Long press does nothing else; moving is double-tap-and-hold.
         } else {
             dragging = true
@@ -809,7 +827,19 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         val (x, y) = switcherAt ?: return@Runnable
         if (abs(lastX - x) > slop || abs(lastY - y) > slop) return@Runnable
         listener?.onWheelEnd(false)
+        listener?.onMoveArmed()
         wheeling = false
+        dragging = true
+        downX = lastX
+        downY = lastY
+        listener?.onDragStart()
+    }
+    /** Super long hold without the switcher: start moving if the finger stayed put. */
+    private val superMove = Runnable {
+        if (moved || dragging || wheeling) return@Runnable
+        val (x, y) = switcherAt ?: return@Runnable
+        if (abs(lastX - x) > slop || abs(lastY - y) > slop) return@Runnable
+        listener?.onMoveArmed()
         dragging = true
         downX = lastX
         downY = lastY
@@ -879,6 +909,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 removeCallbacks(startDrag)
                 removeCallbacks(switchToMove)
                 removeCallbacks(holdToMove)
+                removeCallbacks(superMove)
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 when {
@@ -922,6 +953,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 removeCallbacks(startDrag)
                 removeCallbacks(switchToMove)
                 removeCallbacks(holdToMove)
+                removeCallbacks(superMove)
                 secondTap = false
                 if (dragging) listener?.onDragEnd(0f)
                 if (wheeling) listener?.onWheelEnd(false)

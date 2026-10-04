@@ -178,10 +178,17 @@ fun ButtonScreen() {
     val s by SettingsRepo.state.collectAsState()
 
     Section("Button position") {
-        SwitchRow(
-            "Double-tap and hold to move", s.doubleTapHoldMove,
-            "Tap the button, then tap again and keep holding: it follows your finger. Off: long-press to move (when long press is set to move).",
-        ) { v -> edit { it.copy(doubleTapHoldMove = v) } }
+        ChoiceRow("How to move the button", com.thumbshade.app.data.MoveGesture.entries, s.moveGesture, { it.label }) { v -> edit { it.copy(moveGesture = v) } }
+        Hint(
+            when (s.moveGesture) {
+                com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD -> "Press and keep holding still. The app switcher opens first; keep holding and it gives way with a buzz, then the button follows your finger."
+                com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD -> "Tap the button, then tap again and keep holding: it follows your finger. Single taps wait a moment for a possible second tap."
+                com.thumbshade.app.data.MoveGesture.LONG_PRESS -> "Long-press, then drag. (The app switcher then needs \"Long press\" set to it, and holding still a while longer moves the button.)"
+            }
+        )
+        if (s.moveGesture == com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD) {
+            SliderRow("Hold for", s.moveHoldMs / 1000f, 0.5f..4f, format = { "%.1f s longer".format(it) }) { v -> edit { it.copy(moveHoldMs = (v * 1000).roundToInt()) } }
+        }
         SwitchRow(
             "Snap to edges",
             s.snapToEdge,
@@ -342,8 +349,8 @@ fun ButtonScreen() {
         ChoiceRow("Long press and hold", com.thumbshade.app.data.LongPressAction.entries, s.longPressAction, { it.label }) { v -> edit { it.copy(longPressAction = v) } }
         if (s.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER) {
             Hint(
-                if (s.doubleTapHoldMove) "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Move the button with double-tap and hold."
-                else "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. To move the button, keep holding still for another second."
+                if (s.moveGesture == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Move the button with double-tap and hold."
+                else "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Keep holding still to move the button instead."
             )
             SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
             AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
@@ -403,7 +410,7 @@ private fun GestureModes(s: AppSettings) {
             }
             TextRow("Mode name", mode.name) { v -> updateMode(index) { it.copy(name = v) } }
             GestureRow("Tap", mode.tap) { a -> updateMode(index) { it.copy(tap = a) } }
-            if (s.doubleTapHoldMove) {
+            if (s.moveGesture == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) {
                 GestureRow("Double tap", mode.doubleTap) { a -> updateMode(index) { it.copy(doubleTap = a) } }
             }
             SwitchRow("Action wheel instead of swipes", mode.wheel, "Press the button and slide: a wheel of actions opens in three rings around it. Lift on one to run it.") { v ->
