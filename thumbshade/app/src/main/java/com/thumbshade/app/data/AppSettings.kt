@@ -330,6 +330,9 @@ data class AppSettings(
     val longPressAction: LongPressAction = LongPressAction.APP_SWITCHER,
     val switcherCount: Int = 8,
     val switcherFavorites: Set<String> = emptySet(),
+    /** Vibrate when the switcher opens, on each app you slide over, and when you pick one. */
+    val switcherVibration: Boolean = true,
+    val switcherVibrationStrength: Float = 0.7f,
     val activeMode: Int = 0,
 
     val ai: AiSettings = AiSettings(),

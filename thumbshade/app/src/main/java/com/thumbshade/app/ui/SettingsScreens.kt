@@ -333,6 +333,14 @@ fun ButtonScreen() {
             Hint("Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. To move the button, keep holding still for another second.")
             SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
             AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
+            SwitchRow("Vibrate", s.switcherVibration, "A buzz when it opens, a tick on each app you slide over, a click when you pick one") { v -> edit { it.copy(switcherVibration = v) } }
+            if (s.switcherVibration) {
+                val ctx = LocalContext.current
+                SliderRow("Vibration strength", s.switcherVibrationStrength, 0.1f..1f, format = { "${(it * 100).roundToInt()}%" }) { v ->
+                    edit { it.copy(switcherVibrationStrength = v) }
+                    com.thumbshade.app.overlay.Haptics.play(ctx, com.thumbshade.app.overlay.Haptics.Kind.TICK, v)
+                }
+            }
             if (!com.thumbshade.app.access.UsageWatcher.hasAccess(LocalContext.current)) {
                 Hint("Allow Usage access on the General tab so the switcher can show the apps you used last. Until then it shows your favourites and apps with notifications.")
             }

@@ -343,8 +343,13 @@ class OverlayService : Service() {
                     c.first.toFloat(), c.second.toFloat(), size.first / 2f, size.second / 2f,
                 )
                 ScrollSounds.prepare(this@OverlayService, st.scrollSound)
-                frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                switcherOpen = true
+                if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.OPEN, st.switcherVibrationStrength)
+                else frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
+
+            /** True while the wheel on screen is the app switcher (not a gesture-mode wheel). */
+            private var switcherOpen = false
 
             override fun onWheelStart() {
                 val c = buttonCenter() ?: return
@@ -358,13 +363,20 @@ class OverlayService : Service() {
             override fun onWheelMove(rawX: Float, rawY: Float) {
                 if (ActionWheel.move(rawX, rawY)) {
                     val st = SettingsRepo.current
-                    if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    if (switcherOpen) {
+                        if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.TICK, st.switcherVibrationStrength)
+                    } else if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                     ScrollSounds.play(this@OverlayService, st.scrollSound, st.scrollSoundVolume, st.scrollSoundRespectSilent, frame)
                 }
             }
 
             override fun onWheelEnd(run: Boolean) {
                 val action = ActionWheel.end()
+                val st = SettingsRepo.current
+                if (run && action != null && switcherOpen && st.switcherVibration) {
+                    Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, st.switcherVibrationStrength)
+                }
+                switcherOpen = false
                 if (run && action != null) GestureRunner.run(this@OverlayService, action)
             }
 
