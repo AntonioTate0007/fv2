@@ -336,6 +336,8 @@ data class AppSettings(
     /** Tick sound for the switcher, separate from the shade's scrolling sound. */
     val switcherSound: TickSound = TickSound.TICK,
     val switcherSoundVolume: Float = 0.5f,
+    /** Releasing a long press without picking an app makes the notification icons fall out. */
+    val releaseShowsIcons: Boolean = true,
     val activeMode: Int = 0,
 
     val ai: AiSettings = AiSettings(),

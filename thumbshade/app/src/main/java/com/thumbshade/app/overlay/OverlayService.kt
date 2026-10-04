@@ -79,6 +79,8 @@ class OverlayService : Service() {
     private var pulse by mutableIntStateOf(0)
     /** Bumps each time the shade closes, so the icon cluster can fold away. */
     private var shadeClosed by mutableIntStateOf(0)
+    /** Bumps when a long press is released without picking anything: the icons fall out. */
+    private var iconsDrop by mutableIntStateOf(0)
     private var battery by mutableStateOf<Float?>(null)
     private var buttonHiddenUntil = 0L
     private var lastApplied: AppSettings? = null
@@ -334,7 +336,8 @@ class OverlayService : Service() {
                 val st = SettingsRepo.current
                 val apps = com.thumbshade.app.access.RecentApps.list(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
                 if (apps.isEmpty()) {
-                    com.thumbshade.app.rules.Effects.toast(this@OverlayService, "No recent apps yet. Allow Usage access for ThumbShade.")
+                    // Nothing to switch to: still let the icons fall out on release.
+                    switcherOpen = true
                     return
                 }
                 ActionWheel.show(
@@ -382,8 +385,10 @@ class OverlayService : Service() {
                     // Picking one gets a slightly louder tick.
                     ScrollSounds.play(this@OverlayService, st.switcherSound, (st.switcherSoundVolume * 1.4f).coerceAtMost(1f), st.scrollSoundRespectSilent, frame, force = true)
                 }
+                val wasSwitcher = switcherOpen
                 switcherOpen = false
                 if (run && action != null) GestureRunner.run(this@OverlayService, action)
+                else if (run && wasSwitcher && st.releaseShowsIcons) iconsDrop++
             }
 
             override fun onDragStart() {
@@ -456,7 +461,7 @@ class OverlayService : Service() {
     private fun addCluster(s: AppSettings) {
         val (w, h) = clusterSizePx(s)
         val params = OverlayWindows.params(w, h, touchable = false, noLimits = true)
-        val view = OverlayWindows.composeView(this, owner) { IconCluster(pulse, shadeClosed) }
+        val view = OverlayWindows.composeView(this, owner) { IconCluster(pulse, shadeClosed, iconsDrop) }
         runCatching { wm.addView(view, params) }.onFailure { return }
         clusterView = view
         clusterParams = params

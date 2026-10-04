@@ -345,6 +345,7 @@ fun ButtonScreen() {
                     com.thumbshade.app.overlay.ScrollSounds.play(tickCtx, s.switcherSound, v, false, sv)
                 }
             }
+            SwitchRow("Icons fall out when I let go", s.releaseShowsIcons, "Release the long press without picking an app and the notification icons drop out of the button") { v -> edit { it.copy(releaseShowsIcons = v) } }
             SwitchRow("Vibrate", s.switcherVibration, "A buzz when it opens, a tick on each app you slide over, a click when you pick one") { v -> edit { it.copy(switcherVibration = v) } }
             if (s.switcherVibration) {
                 val ctx = LocalContext.current
