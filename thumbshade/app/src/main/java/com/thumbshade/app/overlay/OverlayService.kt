@@ -330,6 +330,13 @@ class OverlayService : Service() {
 
             override fun switcherEnabled() = SettingsRepo.current.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER
 
+            override fun doubleTapHoldMoves() = SettingsRepo.current.doubleTapHoldMove
+
+            override fun onDoubleTap() {
+                val a = mode().doubleTap
+                if (a.type == GestureType.NONE) onTap() else GestureRunner.run(this@OverlayService, a)
+            }
+
             override fun onSwitcherStart() {
                 val c = buttonCenter() ?: return
                 val size = buttonSize() ?: return
@@ -657,6 +664,8 @@ class OverlayService : Service() {
 class GestureFrame(context: Context) : FrameLayout(context) {
     companion object {
         const val MOVE_AFTER_MS = 1000L
+        /** How long the second tap must be held before the button follows the finger. */
+        const val HOLD_TO_MOVE_MS = 150L
     }
 
     enum class Direction { UP, DOWN, LEFT, RIGHT }
@@ -677,6 +686,9 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         /** Long press opens the app switcher instead of moving the button. */
         fun switcherEnabled(): Boolean = false
         fun onSwitcherStart() {}
+        /** Moving is done by double-tap-and-hold (otherwise by long press). */
+        fun doubleTapHoldMoves(): Boolean = false
+        fun onDoubleTap() { onTap() }
     }
 
     var listener: Listener? = null
@@ -688,14 +700,35 @@ class GestureFrame(context: Context) : FrameLayout(context) {
     private var dragging = false
     private var wheeling = false
     private var velocity: VelocityTracker? = null
+    private val doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+    /** The finger came down for a second tap: holding it moves the button. */
+    private var secondTap = false
+    private var lastTapUp = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    /** A single tap waits briefly in case a second one follows. */
+    private val pendingTap = Runnable { listener?.onTap() }
+    private val holdToMove = Runnable {
+        if (secondTap && !dragging) {
+            dragging = true
+            downX = lastX
+            downY = lastY
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            listener?.onDragStart()
+        }
+    }
     private val startDrag = Runnable {
         if (moved) return@Runnable
+        val doubleTapMoves = listener?.doubleTapHoldMoves() == true
         if (listener?.switcherEnabled() == true) {
             // Long press: the switcher folds out and the finger picks an app, like the wheel.
             wheeling = true
             switcherAt = Pair(lastX, lastY)
             listener?.onSwitcherStart()
-            postDelayed(switchToMove, MOVE_AFTER_MS)
+            // Without double-tap-and-hold, holding still a while longer moves the button instead.
+            if (!doubleTapMoves) postDelayed(switchToMove, MOVE_AFTER_MS)
+        } else if (doubleTapMoves) {
+            // Long press does nothing else; moving is double-tap-and-hold.
         } else {
             dragging = true
             listener?.onDragStart()
@@ -734,7 +767,15 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 moved = false
                 dragging = false
                 wheeling = false
-                postDelayed(startDrag, longPress)
+                val now = android.os.SystemClock.uptimeMillis()
+                secondTap = listener?.doubleTapHoldMoves() == true && now - lastTapUp < doubleTapTimeout &&
+                    abs(downX - lastTapX) < slop * 4 && abs(downY - lastTapY) < slop * 4
+                if (secondTap) {
+                    removeCallbacks(pendingTap)
+                    postDelayed(holdToMove, HOLD_TO_MOVE_MS)
+                } else {
+                    postDelayed(startDrag, longPress)
+                }
             }
             MotionEvent.ACTION_MOVE -> {
                 trackRaw(event)
@@ -742,8 +783,17 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 lastY = event.rawY
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
-                if (dragging) {
+                if (secondTap && !dragging && (abs(dx) > slop || abs(dy) > slop)) {
+                    // Second tap and the finger is already moving: start moving the button now.
+                    removeCallbacks(holdToMove)
+                    dragging = true
+                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    listener?.onDragStart()
                     listener?.onDrag(dx, dy)
+                } else if (dragging) {
+                    listener?.onDrag(dx, dy)
+                } else if (secondTap) {
+                    // Waiting to see whether this second tap is held.
                 } else if (wheeling) {
                     listener?.onWheelMove(event.rawX, event.rawY)
                 } else if (!moved && (abs(dx) > slop || abs(dy) > slop)) {
@@ -759,6 +809,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(startDrag)
                 removeCallbacks(switchToMove)
+                removeCallbacks(holdToMove)
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 when {
@@ -776,16 +827,33 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                             if (dy > 0) Direction.DOWN else Direction.UP
                         }
                     )
+                    secondTap -> {
+                        // A quick double tap without holding.
+                        performClick()
+                        lastTapUp = 0L
+                        listener?.onDoubleTap()
+                    }
+                    listener?.doubleTapHoldMoves() == true -> {
+                        // Wait a moment: a second tap would mean "move" or "double tap".
+                        performClick()
+                        lastTapUp = android.os.SystemClock.uptimeMillis()
+                        lastTapX = event.rawX
+                        lastTapY = event.rawY
+                        postDelayed(pendingTap, doubleTapTimeout)
+                    }
                     else -> {
                         performClick()
                         listener?.onTap()
                     }
                 }
                 dragging = false
+                secondTap = false
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(startDrag)
                 removeCallbacks(switchToMove)
+                removeCallbacks(holdToMove)
+                secondTap = false
                 if (dragging) listener?.onDragEnd(0f)
                 if (wheeling) listener?.onWheelEnd(false)
                 dragging = false

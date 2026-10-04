@@ -179,9 +179,13 @@ fun ButtonScreen() {
 
     Section("Button position") {
         SwitchRow(
+            "Double-tap and hold to move", s.doubleTapHoldMove,
+            "Tap the button, then tap again and keep holding: it follows your finger. Off: long-press to move (when long press is set to move).",
+        ) { v -> edit { it.copy(doubleTapHoldMove = v) } }
+        SwitchRow(
             "Snap to edges",
             s.snapToEdge,
-            "Long-press, then drag. Released near the left or right edge, the button docks there; elsewhere it stays where you drop it.",
+            "Move the button and let go: released near the left or right edge, the button docks there; elsewhere it stays where you drop it.",
         ) { v -> edit { it.copy(snapToEdge = v) } }
         ChoiceRow("When docked", SnapStyle.entries, s.snapStyle, { it.label }) { v -> edit { it.copy(snapStyle = v) } }
         SliderRow("Edge zone", s.snapZonePercent.toFloat(), 5f..45f, format = { "${it.roundToInt()}% of the width" }) { v -> edit { it.copy(snapZonePercent = v.roundToInt()) } }
@@ -330,7 +334,10 @@ fun ButtonScreen() {
     Section("Long press") {
         ChoiceRow("Long press and hold", com.thumbshade.app.data.LongPressAction.entries, s.longPressAction, { it.label }) { v -> edit { it.copy(longPressAction = v) } }
         if (s.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER) {
-            Hint("Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. To move the button, keep holding still for another second.")
+            Hint(
+                if (s.doubleTapHoldMove) "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Move the button with double-tap and hold."
+                else "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. To move the button, keep holding still for another second."
+            )
             SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
             AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
             val tickCtx = LocalContext.current
@@ -389,6 +396,9 @@ private fun GestureModes(s: AppSettings) {
             }
             TextRow("Mode name", mode.name) { v -> updateMode(index) { it.copy(name = v) } }
             GestureRow("Tap", mode.tap) { a -> updateMode(index) { it.copy(tap = a) } }
+            if (s.doubleTapHoldMove) {
+                GestureRow("Double tap", mode.doubleTap) { a -> updateMode(index) { it.copy(doubleTap = a) } }
+            }
             SwitchRow("Action wheel instead of swipes", mode.wheel, "Press the button and slide: a wheel of actions opens in three rings around it. Lift on one to run it.") { v ->
                 updateMode(index) { it.copy(wheel = v) }
             }

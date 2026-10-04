@@ -49,6 +49,8 @@ data class GestureAction(
 data class GestureMode(
     val name: String = "Home",
     val tap: GestureAction = GestureAction(GestureType.TOGGLE_SHADE),
+    /** A quick double tap (without holding). NONE = same as a tap. */
+    val doubleTap: GestureAction = GestureAction(),
     val up: GestureAction = GestureAction(GestureType.OPEN_LATEST),
     val down: GestureAction = GestureAction(GestureType.HIDE_BUTTON),
     val left: GestureAction = GestureAction(GestureType.BACK),
@@ -329,6 +331,8 @@ data class AppSettings(
     /** Long press and hold on the button. */
     val longPressAction: LongPressAction = LongPressAction.APP_SWITCHER,
     val switcherCount: Int = 8,
+    /** Move the button with double-tap-and-hold (instead of long press). */
+    val doubleTapHoldMove: Boolean = true,
     val switcherFavorites: Set<String> = emptySet(),
     /** Vibrate when the switcher opens, on each app you slide over, and when you pick one. */
     val switcherVibration: Boolean = true,
