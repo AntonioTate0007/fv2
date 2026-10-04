@@ -93,6 +93,7 @@ fun ButtonFace(
     docked: Boolean,
     dockedRight: Boolean,
     shown: MutableTransitionState<Boolean>,
+    peeking: Boolean = false,
 ) {
     val s by SettingsRepo.state.collectAsState()
     val all by NotificationRepo.items.collectAsState()
@@ -109,8 +110,9 @@ fun ButtonFace(
     }
     val theme = Themes.resolve(s, isSystemInDarkTheme())
     val accent = Color(currentAccent(context, s))
-    val dockedLook = docked && s.dockedLook
-    val half = docked && s.snapStyle == SnapStyle.HALF
+    val dockedLook = docked && s.dockedLook && !peeking
+    // Pulled out for a peek: show the whole face, not just the half that sticks out.
+    val half = docked && s.snapStyle == SnapStyle.HALF && !peeking
 
     // New-notification animation.
     val scale = remember { Animatable(1f) }

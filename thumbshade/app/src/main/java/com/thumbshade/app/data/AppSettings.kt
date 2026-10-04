@@ -282,6 +282,9 @@ data class AppSettings(
     val contactPhoto: Boolean = true,
     /** A small app icon on the corner of that picture. */
     val contactPhotoBadge: Boolean = true,
+    /** When docked, a message from someone with a picture pulls the button out for a moment. */
+    val peekOnContact: Boolean = true,
+    val peekSeconds: Int = 3,
     val mediaLook: MediaLook = MediaLook.ALBUM_ART,
     val mediaOnlyPlaying: Boolean = true,
     val mediaDimPercent: Int = 0,

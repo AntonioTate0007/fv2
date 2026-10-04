@@ -273,6 +273,13 @@ fun ButtonScreen() {
         ) { v -> edit { it.copy(contactPhoto = v) } }
         if (s.contactPhoto) {
             SwitchRow("App badge on the picture", s.contactPhotoBadge) { v -> edit { it.copy(contactPhotoBadge = v) } }
+            SwitchRow(
+                "Peek out when someone writes", s.peekOnContact,
+                "While docked, a message from someone with a picture pulls the button out from the edge to show them, the icons fall out, then it slides back",
+            ) { v -> edit { it.copy(peekOnContact = v) } }
+            if (s.peekOnContact) {
+                SliderRow("Peek for", s.peekSeconds.toFloat(), 1f..10f, format = { "${it.roundToInt()} s" }) { v -> edit { it.copy(peekSeconds = v.roundToInt()) } }
+            }
             Hint("Allow Contacts on the General tab to use the photos saved in your contacts too.")
         }
     }

@@ -182,6 +182,11 @@ class OverlayService : Service() {
         private set
     var dockedOnRight by mutableStateOf(true)
         private set
+    /** Pulled out from the edge for a moment to show who just wrote. */
+    var peeking by mutableStateOf(false)
+        private set
+    private var peekAnim: android.animation.ValueAnimator? = null
+    private val peekBack = Runnable { endPeek() }
     /** Drives the button's appear / hide animation. */
     val buttonShown = MutableTransitionState(false)
     private var lastSize: Pair<Int, Int>? = null
@@ -264,8 +269,10 @@ class OverlayService : Service() {
             }
             y = y.coerceIn(0, max(0, bounds.height() - h))
 
-            var changed = params.x != x || params.y != y || params.width != w || params.height != h
-            params.x = x
+            // While peeking, the button stays pulled out; the peek puts it back itself.
+            val targetX = if (peeking) params.x else x
+            var changed = params.x != targetX || params.y != y || params.width != w || params.height != h
+            params.x = targetX
             params.y = y
             params.width = w
             params.height = h
@@ -303,7 +310,7 @@ class OverlayService : Service() {
         // Compose finds its lifecycle on the window's root view, so the root needs the owner too.
         owner.attach(frame)
         val face = OverlayWindows.composeView(this, owner) {
-            ButtonFace(pulse = pulse, battery = battery, docked = docked, dockedRight = dockedOnRight, shown = buttonShown)
+            ButtonFace(pulse = pulse, battery = battery, docked = docked, dockedRight = dockedOnRight, shown = buttonShown, peeking = peeking)
         }
         frame.addView(face, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         frame.listener = object : GestureFrame.Listener {
@@ -399,6 +406,7 @@ class OverlayService : Service() {
             }
 
             override fun onDragStart() {
+                cancelPeek()
                 dragging = true
                 val st = SettingsRepo.current
                 // Undocking: switch to the free-floating size and pull the button fully on screen.
@@ -623,6 +631,67 @@ class OverlayService : Service() {
 
     fun notificationArrived(item: ShadeItem) {
         pulse++
+        val s = SettingsRepo.current
+        val fromPerson = item.messages.isNotEmpty() || item.category == com.thumbshade.app.rules.Cat.MESSAGE
+        if (!s.peekOnContact || !docked || dragging || !fromPerson || buttonView == null) return
+        // Only for someone with a picture: look it up off the main thread, then peek.
+        Thread {
+            val hasPhoto = com.thumbshade.app.notif.ContactPhotos.forItem(this, item) != null
+            if (hasPhoto) main.post { startPeek() }
+        }.start()
+    }
+
+    /** Slides the docked button fully out, shows the sender, and the icons fall out around it. */
+    private fun startPeek() {
+        val p = buttonParams ?: return
+        if (!docked || dragging) return
+        val s = SettingsRepo.current
+        val b = OverlayWindows.screenBounds(this)
+        val margin = OverlayWindows.dp(this, 8)
+        val out = if (dockedOnRight) b.width() - p.width - margin else margin
+        main.removeCallbacks(peekBack)
+        peeking = true
+        animateButtonX(out, android.view.animation.OvershootInterpolator(1.4f)) {
+            if (s.releaseShowsIcons || s.iconCluster) iconsDrop++
+        }
+        main.postDelayed(peekBack, s.peekSeconds.coerceIn(1, 15) * 1000L)
+    }
+
+    private fun endPeek() {
+        if (!peeking) return
+        val p = buttonParams ?: run { peeking = false; return }
+        val b = OverlayWindows.screenBounds(this)
+        val home = Placement.dockX(b.width(), p.width, dockedOnRight, SettingsRepo.current.snapStyle)
+        animateButtonX(home, android.view.animation.AccelerateDecelerateInterpolator()) {
+            peeking = false
+            reapply()
+        }
+    }
+
+    private fun cancelPeek() {
+        main.removeCallbacks(peekBack)
+        peekAnim?.cancel()
+        peekAnim = null
+        peeking = false
+    }
+
+    private fun animateButtonX(target: Int, interpolator: android.animation.TimeInterpolator, done: () -> Unit) {
+        val p = buttonParams ?: return
+        peekAnim?.cancel()
+        peekAnim = android.animation.ValueAnimator.ofInt(p.x, target).apply {
+            duration = 320
+            this.interpolator = interpolator
+            addUpdateListener {
+                p.x = it.animatedValue as Int
+                updateButtonLayout()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+                override fun onAnimationEnd(animation: android.animation.Animator) { if (!cancelled) done() }
+            })
+            start()
+        }
     }
 
     companion object {
