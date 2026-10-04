@@ -333,6 +333,18 @@ fun ButtonScreen() {
             Hint("Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. To move the button, keep holding still for another second.")
             SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
             AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
+            val tickCtx = LocalContext.current
+            ChoiceRow("Tick sound", com.thumbshade.app.data.TickSound.entries, s.switcherSound, { it.label }) { v ->
+                edit { it.copy(switcherSound = v) }
+                com.thumbshade.app.overlay.ScrollSounds.prepare(tickCtx, v)
+            }
+            if (s.switcherSound != com.thumbshade.app.data.TickSound.NONE && s.switcherSound != com.thumbshade.app.data.TickSound.SYSTEM) {
+                val sv = androidx.compose.ui.platform.LocalView.current
+                SliderRow("Tick volume", s.switcherSoundVolume, 0.05f..1f, format = { "${(it * 100).roundToInt()}%" }) { v ->
+                    edit { it.copy(switcherSoundVolume = v) }
+                    com.thumbshade.app.overlay.ScrollSounds.play(tickCtx, s.switcherSound, v, false, sv)
+                }
+            }
             SwitchRow("Vibrate", s.switcherVibration, "A buzz when it opens, a tick on each app you slide over, a click when you pick one") { v -> edit { it.copy(switcherVibration = v) } }
             if (s.switcherVibration) {
                 val ctx = LocalContext.current

@@ -129,10 +129,10 @@ object ScrollSounds {
      * One click. [volume] 0..1. Skipped while the phone is on silent or vibrate when
      * [respectSilent], and never faster than about 28 a second.
      */
-    fun play(context: Context, sound: TickSound, volume: Float, respectSilent: Boolean, view: android.view.View? = null) {
+    fun play(context: Context, sound: TickSound, volume: Float, respectSilent: Boolean, view: android.view.View? = null, force: Boolean = false) {
         if (sound == TickSound.NONE) return
         val now = SystemClock.uptimeMillis()
-        if (now - lastPlay < 35) return
+        if (now - lastPlay < 35 && !force) return
         lastPlay = now
         if (respectSilent && context.getSystemService(AudioManager::class.java)?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
         if (sound == TickSound.SYSTEM) {

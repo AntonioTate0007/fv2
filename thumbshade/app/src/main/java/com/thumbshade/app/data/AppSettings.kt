@@ -333,6 +333,9 @@ data class AppSettings(
     /** Vibrate when the switcher opens, on each app you slide over, and when you pick one. */
     val switcherVibration: Boolean = true,
     val switcherVibrationStrength: Float = 0.7f,
+    /** Tick sound for the switcher, separate from the shade's scrolling sound. */
+    val switcherSound: TickSound = TickSound.TICK,
+    val switcherSoundVolume: Float = 0.5f,
     val activeMode: Int = 0,
 
     val ai: AiSettings = AiSettings(),

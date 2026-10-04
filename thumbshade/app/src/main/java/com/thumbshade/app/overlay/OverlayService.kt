@@ -342,7 +342,8 @@ class OverlayService : Service() {
                     apps.map { com.thumbshade.app.data.GestureAction(GestureType.OPEN_APP, it) },
                     c.first.toFloat(), c.second.toFloat(), size.first / 2f, size.second / 2f,
                 )
-                ScrollSounds.prepare(this@OverlayService, st.scrollSound)
+                ScrollSounds.prepare(this@OverlayService, st.switcherSound)
+                ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame)
                 switcherOpen = true
                 if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.OPEN, st.switcherVibrationStrength)
                 else frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -365,16 +366,21 @@ class OverlayService : Service() {
                     val st = SettingsRepo.current
                     if (switcherOpen) {
                         if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.TICK, st.switcherVibrationStrength)
-                    } else if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                    ScrollSounds.play(this@OverlayService, st.scrollSound, st.scrollSoundVolume, st.scrollSoundRespectSilent, frame)
+                        ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame)
+                    } else {
+                        if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        ScrollSounds.play(this@OverlayService, st.scrollSound, st.scrollSoundVolume, st.scrollSoundRespectSilent, frame)
+                    }
                 }
             }
 
             override fun onWheelEnd(run: Boolean) {
                 val action = ActionWheel.end()
                 val st = SettingsRepo.current
-                if (run && action != null && switcherOpen && st.switcherVibration) {
-                    Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, st.switcherVibrationStrength)
+                if (run && action != null && switcherOpen) {
+                    if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, st.switcherVibrationStrength)
+                    // Picking one gets a slightly louder tick.
+                    ScrollSounds.play(this@OverlayService, st.switcherSound, (st.switcherSoundVolume * 1.4f).coerceAtMost(1f), st.scrollSoundRespectSilent, frame, force = true)
                 }
                 switcherOpen = false
                 if (run && action != null) GestureRunner.run(this@OverlayService, action)
