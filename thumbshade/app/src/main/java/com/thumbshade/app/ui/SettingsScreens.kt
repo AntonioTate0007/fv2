@@ -353,7 +353,7 @@ fun ButtonScreen() {
                 else "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Keep holding still to move the button instead."
             )
             ChoiceRow("Show in the switcher", com.thumbshade.app.data.SwitcherSource.entries, s.switcherSource, { it.label }) { v -> edit { it.copy(switcherSource = v) } }
-            Hint("Apps with notifications have a dot; picking one opens its newest notification, straight into the chat or email.")
+            Hint("✦ marks apps ThumbShade predicts you'll want next. Apps with notifications have a dot; picking one opens its newest notification, straight into the chat or email.")
             SliderRow("Apps in the switcher", s.switcherCount.toFloat(), 3f..16f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(switcherCount = v.roundToInt()) } }
             AppSetRow("Favourite apps (always first)", s.switcherFavorites) { v -> edit { it.copy(switcherFavorites = v) } }
             val tickCtx = LocalContext.current

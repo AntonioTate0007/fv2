@@ -37,6 +37,7 @@ class App : Application() {
         HoldStore.init(this)
         com.thumbshade.app.ai.Engagement.init(this)
         com.thumbshade.app.ai.Digest.init(this)
+        com.thumbshade.app.ai.AppPredictor.init(this)
         createChannels()
 
         NotificationRepo.items.debounce(300).onEach { Widgets.updateAll(this) }.launchIn(scope)

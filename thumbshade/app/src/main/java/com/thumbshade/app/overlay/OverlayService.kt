@@ -410,6 +410,9 @@ class OverlayService : Service() {
                 }
                 val wasSwitcher = switcherOpen
                 switcherOpen = false
+                if (run && wasSwitcher && action != null && action.arg.isNotBlank() &&
+                    (action.type == GestureType.OPEN_APP || action.type == GestureType.OPEN_APP_NOTIFICATION)
+                ) com.thumbshade.app.ai.AppPredictor.onPicked(this@OverlayService, action.arg)
                 if (run && action != null) GestureRunner.run(this@OverlayService, action)
                 else if (run && wasSwitcher && st.releaseShowsIcons) iconsDrop++
             }

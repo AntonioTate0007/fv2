@@ -85,6 +85,17 @@ fun SmartScreen() {
         }
     }
 
+    Section("Predicted apps") {
+        SwitchRow(
+            "Predict the next app", ai.predictApps,
+            "Learns which app you usually open next (after which app, at what time of day) and puts its guesses, marked ✦, in the inner ring of the long-press switcher",
+        ) { v -> editAi { it.copy(predictApps = v) } }
+        if (ai.predictApps) {
+            SliderRow("Predictions in the switcher", ai.predictCount.toFloat(), 1f..6f, format = { "${it.roundToInt()}" }) { v -> editAi { it.copy(predictCount = v.roundToInt()) } }
+            PredictionPreview()
+        }
+    }
+
     Section("Priority") {
         SwitchRow("Learn from what I do", ai.learn, "Opening and replying raise an app or person; swiping away unread lowers them. Old habits fade after a few weeks.") { v -> editAi { it.copy(learn = v) } }
         SwitchRow("Smart order", ai.smartOrder, "Important notifications go nearest your thumb; less important ones further away") { v -> editAi { it.copy(smartOrder = v) } }
@@ -212,5 +223,41 @@ private fun DigestTimes(times: List<Int>) {
             },
             dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun PredictionPreview() {
+    val context = LocalContext.current
+    var version by remember { mutableIntStateOf(0) }
+    var apps by remember { mutableStateOf<List<String>>(emptyList()) }
+    var learned by remember { mutableIntStateOf(0) }
+    LaunchedEffect(version) {
+        withContext(Dispatchers.IO) {
+            apps = com.thumbshade.app.ai.AppPredictor.predict(context, 5)
+            learned = com.thumbshade.app.ai.AppPredictor.experience()
+        }
+    }
+    if (!com.thumbshade.app.access.UsageWatcher.hasAccess(context)) {
+        Hint("Allow Usage access on the General tab so it can learn from the last week straight away. Without it, it learns as you go (needs the accessibility service).")
+    }
+    Hint(if (learned == 0) "Nothing learned yet." else "Learned from about $learned app switches.")
+    if (apps.isNotEmpty()) {
+        Text("Right now it would suggest", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+            apps.forEach { pkg ->
+                androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(56.dp)) {
+                    AppIcon(pkg, Modifier.size(36.dp))
+                    Text(AppInfoCache.label(context, pkg), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = { version++ }) { Text("Refresh") }
+        TextButton(onClick = {
+            com.thumbshade.app.ai.AppPredictor.reset()
+            version++
+        }) { Text("Forget what was learned") }
     }
 }

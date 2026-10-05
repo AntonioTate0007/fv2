@@ -179,7 +179,8 @@ enum class MoveGesture(val label: String) {
 enum class SwitcherSource(val label: String) {
     RECENT_APPS("Recently used apps"),
     NOTIFICATIONS("Apps with notifications (newest first)"),
-    BOTH("Both: notifications inside, recent apps outside"),
+    BOTH("Smart mix: predicted, then notifications, then recent"),
+    PREDICTED("Predicted for you"),
 }
 
 @Serializable

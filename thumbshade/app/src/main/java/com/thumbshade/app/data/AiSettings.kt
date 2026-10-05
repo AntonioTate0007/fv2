@@ -17,6 +17,10 @@ data class AiSettings(
     val minimizeLow: Boolean = false,
     val showBadges: Boolean = true,
 
+    /** Learn which app you open next and suggest it in the switcher. */
+    val predictApps: Boolean = true,
+    val predictCount: Int = 4,
+
     // Replies and actions
     val smartReplies: Boolean = true,
     val smartActions: Boolean = true,

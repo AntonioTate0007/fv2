@@ -173,7 +173,21 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
                         .padding(6.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (sl.action.type == GestureType.OPEN_APP) {
+                    if (sl.action.type == GestureType.OPEN_APP && sl.action.label == com.thumbshade.app.access.RecentApps.PREDICTED) {
+                        Box(Modifier.size(34.dp)) {
+                            AppIcon(sl.action.arg, Modifier.size(34.dp))
+                            // A sparkle: ThumbShade's guess at what you want next.
+                            Text(
+                                "✦",
+                                fontSize = 13.sp,
+                                color = accent,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                    .padding(horizontal = 2.dp),
+                            )
+                        }
+                    } else if (sl.action.type == GestureType.OPEN_APP) {
                         AppIcon(sl.action.arg, Modifier.size(34.dp))
                     } else if (sl.action.type == GestureType.OPEN_APP_NOTIFICATION) {
                         Box(Modifier.size(34.dp)) {
