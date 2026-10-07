@@ -1,5 +1,7 @@
 package com.thumbshade.app.overlay
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
@@ -413,6 +415,23 @@ fun IconCluster(pulse: Int = 0, shadeClosed: Int = 0, drop: Int = 0) {
     }
     val spread = 1f - fold.value
     val all by NotificationRepo.items.collectAsState()
+    // The app that just notified glows: a soft halo in its colour that breathes, then fades.
+    var glowPkg by remember { mutableStateOf<String?>(null) }
+    var glowColor by remember { mutableStateOf(Color.White) }
+    val glow = remember { androidx.compose.animation.core.Animatable(0f) }
+    val themeAccent = Color(currentAccent(LocalContext.current, s))
+    LaunchedEffect(pulse) {
+        if (pulse == 0 || !s.glowNewIcon) return@LaunchedEffect
+        val n = ShadeFilter.visible(NotificationRepo.items.value, s).maxByOrNull { it.postTime } ?: return@LaunchedEffect
+        glowPkg = n.pkg
+        glowColor = if (n.color != 0) Color(n.color).copy(alpha = 1f) else themeAccent
+        glow.animateTo(1f, tween(250))
+        kotlinx.coroutines.delay(s.glowSeconds.coerceIn(1, 30) * 1000L)
+        glow.animateTo(0f, tween(900))
+    }
+    val breathe by rememberInfiniteTransition(label = "glow").animateFloat(
+        0.55f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "breathe",
+    )
     val pkgs = remember(all, s) {
         ShadeFilter.visible(all, s).sortedByDescending { it.postTime }.map { it.pkg }.distinct()
     }
@@ -455,6 +474,17 @@ fun IconCluster(pulse: Int = 0, shadeClosed: Int = 0, drop: Int = 0) {
                         scaleX = 0.3f + 0.7f * spread
                         scaleY = scaleX
                         alpha = spread
+                    }
+                    .drawBehind {
+                        if (pkg == glowPkg && glow.value > 0f) {
+                            val a = glow.value * breathe
+                            val r = size.minDimension / 2f
+                            drawCircle(
+                                Brush.radialGradient(listOf(glowColor.copy(alpha = 0.75f * a), Color.Transparent), center, r * 1.9f),
+                                radius = r * 1.9f,
+                            )
+                            drawCircle(glowColor.copy(alpha = a), radius = r + 2.dp.toPx(), style = Stroke(2.5.dp.toPx()))
+                        }
                     },
                 colorFilter = mono,
             )

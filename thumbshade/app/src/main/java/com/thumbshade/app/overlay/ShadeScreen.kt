@@ -140,6 +140,8 @@ import com.thumbshade.app.ui.ThumbTheme
 import com.thumbshade.app.ui.relativeTime
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.runtime.DisposableEffect
@@ -159,6 +161,13 @@ import kotlin.math.sin
 
 private enum class Panel { NONE, REPLY, SNOOZE, ACTIONS, MENU }
 
+/** When the shade was last closed: cards newer than that are new to you. */
+object ShadeSeen {
+    @Volatile var lastClosedAt = 0L
+}
+
+private val LocalSeenBefore = androidx.compose.runtime.staticCompositionLocalOf { Long.MAX_VALUE }
+
 /** True while the shade is shown over the lock screen. */
 private val LocalLockScreen = androidx.compose.runtime.staticCompositionLocalOf { false }
 
@@ -174,6 +183,7 @@ fun ShadeScreen(
         val all by NotificationRepo.items.collectAsState()
         val media by MediaHub.state.collectAsState()
         val held by HoldStore.held.collectAsState()
+        val seenBefore = remember { ShadeSeen.lastClosedAt }
         val entries = remember(all, s) { ShadeFilter.entries(all, s) { com.thumbshade.app.ai.AiHub.priority(it) } }
         val dims = s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM || s.shadeOverlay == com.thumbshade.app.data.ShadeOverlay.DIM_BLUR
         val dimTarget = when {
@@ -210,7 +220,9 @@ fun ShadeScreen(
             ) {
                 val p by with(Anims) { progress(s.shadeAnim) }
                 Box(Modifier.graphicsLayer { with(Anims) { apply(s.shadeAnim, p, 0) } }) {
-                    ShadePanel(s, entries, media, held.size, onClose, onOpenSettings)
+                    androidx.compose.runtime.CompositionLocalProvider(LocalSeenBefore provides seenBefore) {
+                        ShadePanel(s, entries, media, held.size, onClose, onOpenSettings)
+                    }
                 }
             }
         }
@@ -515,7 +527,7 @@ private fun cardBrush(s: AppSettings, accent: Color): Brush {
 /** Shape, background, border and click handling shared by every card. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, onLongClick: (() -> Unit)? = null): Modifier {
+private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, onLongClick: (() -> Unit)? = null, glow: Float = 0f): Modifier {
     val shape = RoundedCornerShape(s.cardCornerDp.dp)
     val c = s.card
     val borderColor = if (c.borderFromNotification) accent else Color(c.borderColor)
@@ -524,6 +536,8 @@ private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, on
         .clip(shape)
         .background(cardBrush(s, accent), shape)
         .then(if (c.borderWidthDp > 0) Modifier.border(c.borderWidthDp.dp, borderColor, shape) else Modifier)
+        // New since you last looked: a glowing edge in the notification's colour.
+        .then(if (glow > 0f) Modifier.border(2.5.dp, accent.copy(alpha = glow), shape).background(accent.copy(alpha = 0.10f * glow), shape) else Modifier)
         .combinedClickable(onClick = onClick, onLongClick = onLongClick)
 }
 
@@ -646,6 +660,17 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
     val bodyLines = s.perAppLines[item.pkg] ?: if (c.limitBodyLines) s.bodyMaxLines else Int.MAX_VALUE
     val lockScreen = LocalLockScreen.current
+    // Arrived since the shade was last closed: glow, breathing, for a few seconds.
+    val isNew = s.glowNewCards && item.postTime > LocalSeenBefore.current
+    val glowAnim = remember(item.key) { Animatable(if (isNew) 1f else 0f) }
+    LaunchedEffect(item.key, isNew) {
+        if (!isNew) return@LaunchedEffect
+        delay(s.glowSeconds.coerceIn(1, 30) * 1000L)
+        glowAnim.animateTo(0f, tween(900))
+    }
+    val breathe by androidx.compose.animation.core.rememberInfiniteTransition(label = "cardGlow").animateFloat(
+        0.45f, 1f, androidx.compose.animation.core.infiniteRepeatable(tween(800), androidx.compose.animation.core.RepeatMode.Reverse), label = "b",
+    )
 
     Column(
         Modifier
@@ -656,6 +681,7 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                     if (s.closeAfterOpen) onClose()
                 },
                 onLongClick = { panel = if (panel == Panel.MENU) Panel.NONE else Panel.MENU },
+                glow = glowAnim.value * breathe,
             )
             .padding(horizontal = (c.paddingDp + 2).dp, vertical = c.paddingDp.dp),
     ) {

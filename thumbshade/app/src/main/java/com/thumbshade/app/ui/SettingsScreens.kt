@@ -334,6 +334,7 @@ fun ButtonScreen() {
                 "Fold icons back into the button", s.clusterFold,
                 "The icons fly out when a notification arrives, then tuck back in so they don't cover your apps",
             ) { v -> edit { it.copy(clusterFold = v) } }
+            SwitchRow("Glow on the app that just notified", s.glowNewIcon, "Its icon gets a soft breathing halo in the app's colour") { v -> edit { it.copy(glowNewIcon = v) } }
             SwitchRow(
                 "Fold icons after I close the shade", s.clusterFoldAfterShade,
                 "Once you've opened the shade and seen them, they tuck away until a new notification arrives",
@@ -623,6 +624,10 @@ fun ShadeSettingsScreen() {
         ) { v -> if (!s.pushPullClose) edit { it.copy(wrapAround = v) } }
         if (s.pushPullClose || s.wrapAround) {
             SliderRow("Pull distance", s.pullCloseDp.toFloat(), 40f..240f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(pullCloseDp = v.roundToInt()) } }
+        }
+        SwitchRow("New notifications glow", s.glowNewCards, "Cards that arrived since you last looked glow when the shade opens") { v -> edit { it.copy(glowNewCards = v) } }
+        if (s.glowNewCards || s.glowNewIcon) {
+            SliderRow("Glow for", s.glowSeconds.toFloat(), 1f..20f, format = { "${it.roundToInt()} s" }) { v -> edit { it.copy(glowSeconds = v.roundToInt()) } }
         }
         SwitchRow("Swipe to dismiss", s.swipeToDismiss) { v -> edit { it.copy(swipeToDismiss = v) } }
         if (s.swipeToDismiss) {

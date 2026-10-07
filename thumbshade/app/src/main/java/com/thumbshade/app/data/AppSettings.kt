@@ -328,6 +328,11 @@ data class AppSettings(
     val clusterFoldSeconds: Int = 6,
     /** Fold the icons right away once you've opened and closed the shade (you've seen them). */
     val clusterFoldAfterShade: Boolean = true,
+    /** The icon of the app that just notified glows for a few seconds. */
+    val glowNewIcon: Boolean = true,
+    /** Cards that arrived since you last looked glow when the shade opens. */
+    val glowNewCards: Boolean = true,
+    val glowSeconds: Int = 6,
     val monochromeIcons: Boolean = false,
     val snapToEdge: Boolean = true,
     val snapStyle: SnapStyle = SnapStyle.HALF,

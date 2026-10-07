@@ -638,6 +638,7 @@ class OverlayService : Service() {
     fun closeShade() {
         if (shadeView == null) return
         shadeClosed++
+        ShadeSeen.lastClosedAt = System.currentTimeMillis()
         shadeState.targetState = false
         main.postDelayed({ if (!shadeState.targetState) removeShadeNow() }, 650)
     }
