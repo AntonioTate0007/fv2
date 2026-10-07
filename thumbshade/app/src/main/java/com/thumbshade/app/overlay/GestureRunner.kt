@@ -28,6 +28,7 @@ object GestureRunner {
                 if (latest != null) NotifOps.open(context, latest) else Effects.toast(context, "No notifications")
             }
             GestureType.OPEN_APP -> launch(context, action.arg)
+            GestureType.QUICK_TEXT -> com.thumbshade.app.access.QuickContacts.text(context, com.thumbshade.app.access.QuickContacts.number(action.arg))
             GestureType.OPEN_APP_NOTIFICATION -> {
                 // Straight into the newest notification (the chat, the email…), else just the app.
                 val newest = NotificationRepo.items.value.filter { it.pkg == action.arg }.maxByOrNull { it.postTime }

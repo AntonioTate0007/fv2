@@ -15,6 +15,7 @@ enum class GestureType(val label: String) {
     OPEN_LATEST("Open the newest notification"),
     OPEN_APP("Open an app"),
     OPEN_APP_NOTIFICATION("Open an app's newest notification"),
+    QUICK_TEXT("Text a favourite contact"),
     APP_SCREEN("Open an app screen"),
     SHORTCUT("Run a shortcut"),
     CUSTOM_INTENT("Send a custom intent"),
@@ -184,6 +185,13 @@ enum class SwitcherSource(val label: String) {
 }
 
 @Serializable
+enum class QuickTextApp(val label: String) { MESSAGES("Messages (your texting app)"), WHATSAPP("WhatsApp") }
+
+/** Someone you added for quick texts. [photo] is a contacts photo address, if any. */
+@Serializable
+data class QuickContact(val name: String, val number: String, val photo: String? = null)
+
+@Serializable
 enum class LongPressAction(val label: String) {
     APP_SWITCHER("Open the app switcher"),
     MOVE("Move the button"),
@@ -351,6 +359,12 @@ data class AppSettings(
     val longPressAction: LongPressAction = LongPressAction.APP_SWITCHER,
     val switcherCount: Int = 8,
     val switcherSource: SwitcherSource = SwitcherSource.BOTH,
+    /** Favourite people fold out with the switcher; picking one starts a text to them. */
+    val quickTextEnabled: Boolean = true,
+    val quickTextStarred: Boolean = true,
+    val quickTextCount: Int = 5,
+    val quickTextApp: QuickTextApp = QuickTextApp.MESSAGES,
+    val quickContacts: List<QuickContact> = emptyList(),
     /** How you pick the button up to move it. */
     val moveGesture: MoveGesture = MoveGesture.SUPER_LONG_HOLD,
     /** Super long hold: how much longer than a long press to keep holding. */

@@ -6,6 +6,10 @@ import android.view.WindowManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.material.icons.filled.Sms
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -132,6 +136,42 @@ object ActionWheel {
     }
 }
 
+/** A favourite person: their photo or initials, with a small message badge. */
+@Composable
+private fun ContactBubble(a: GestureAction, accent: Color) {
+    val context = LocalContext.current
+    val photoUri = com.thumbshade.app.access.QuickContacts.photo(a.arg)
+    val bmp by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, photoUri) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.thumbshade.app.access.QuickContacts.photoBitmap(context, photoUri)?.asImageBitmap()
+        }
+    }
+    Box(Modifier.size(40.dp)) {
+        val b = bmp
+        if (b != null) {
+            androidx.compose.foundation.Image(
+                b, a.label,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(40.dp).clip(CircleShape),
+            )
+        } else {
+            Box(Modifier.size(40.dp).background(accent.copy(alpha = 0.85f), CircleShape), contentAlignment = Alignment.Center) {
+                Text(com.thumbshade.app.access.QuickContacts.initials(a.label), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .size(16.dp)
+                .background(MaterialTheme.colorScheme.surface, CircleShape)
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Sms, "Text", tint = accent, modifier = Modifier.size(12.dp))
+        }
+    }
+}
+
 private fun shortLabel(context: Context, a: GestureAction): String = when (a.type) {
     GestureType.OPEN_APP, GestureType.OPEN_APP_NOTIFICATION -> AppInfoCache.label(context, a.arg)
     GestureType.PASTE_TEXT -> "\"" + a.arg.take(12) + "\""
@@ -189,6 +229,8 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
                         }
                     } else if (sl.action.type == GestureType.OPEN_APP) {
                         AppIcon(sl.action.arg, Modifier.size(34.dp))
+                    } else if (sl.action.type == GestureType.QUICK_TEXT) {
+                        ContactBubble(sl.action, accent)
                     } else if (sl.action.type == GestureType.OPEN_APP_NOTIFICATION) {
                         Box(Modifier.size(34.dp)) {
                             AppIcon(sl.action.arg, Modifier.size(34.dp))

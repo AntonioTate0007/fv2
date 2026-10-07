@@ -357,7 +357,15 @@ class OverlayService : Service() {
                 val c = buttonCenter() ?: return
                 val size = buttonSize() ?: return
                 val st = SettingsRepo.current
-                val apps = com.thumbshade.app.access.RecentApps.forSwitcher(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
+                val appsOnly = com.thumbshade.app.access.RecentApps.forSwitcher(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
+                val people = com.thumbshade.app.access.QuickContacts.forSwitcher(this@OverlayService)
+                // Apps take the inner ring, favourite people the middle ring, any further apps the outer one.
+                val apps = if (people.isEmpty()) appsOnly else {
+                    val rings = com.thumbshade.app.data.GestureMode.RINGS
+                    val inner = appsOnly.take(rings[0]).let { it + List(rings[0] - it.size) { com.thumbshade.app.data.GestureAction() } }
+                    val middle = people.take(rings[1]).let { it + List(rings[1] - it.size) { com.thumbshade.app.data.GestureAction() } }
+                    inner + middle + appsOnly.drop(rings[0])
+                }
                 if (apps.none { it.type != GestureType.NONE }) {
                     // Nothing to switch to: still let the icons fall out on release.
                     switcherOpen = true

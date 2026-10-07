@@ -1,5 +1,7 @@
 package com.thumbshade.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.Color
@@ -368,6 +370,7 @@ fun ButtonScreen() {
                     com.thumbshade.app.overlay.ScrollSounds.play(tickCtx, s.switcherSound, v, false, sv)
                 }
             }
+            QuickTextSettings(s)
             SwitchRow("Icons fall out when I let go", s.releaseShowsIcons, "Release the long press without picking an app and the notification icons drop out of the button") { v -> edit { it.copy(releaseShowsIcons = v) } }
             SwitchRow("Vibrate", s.switcherVibration, "A buzz when it opens, a tick on each app you slide over, a click when you pick one") { v -> edit { it.copy(switcherVibration = v) } }
             if (s.switcherVibration) {
@@ -500,7 +503,7 @@ private fun GestureRow(title: String, action: GestureAction, onChange: (GestureA
             title = { Text(title) },
             text = {
                 LazyColumn(Modifier.heightIn(max = 440.dp)) {
-                    items(GestureType.entries) { t ->
+                    items(GestureType.entries.filter { it != GestureType.QUICK_TEXT }) { t ->
                         Text(
                             t.label,
                             Modifier
@@ -847,4 +850,58 @@ private fun AnimatedIconRow(s: AppSettings) {
             confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
         )
     }
+}
+
+/** Favourite people that fold out with the switcher for a quick text. */
+@Composable
+private fun QuickTextSettings(s: AppSettings) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        // The picker lets ThumbShade read the chosen entry, even without the Contacts permission.
+        runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(
+                    android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                    android.provider.ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI,
+                ),
+                null, null, null,
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    val name = c.getString(0).orEmpty()
+                    val number = c.getString(1).orEmpty()
+                    if (number.isNotBlank()) {
+                        val person = com.thumbshade.app.data.QuickContact(name.ifBlank { number }, number, c.getString(2))
+                        edit { st -> st.copy(quickContacts = (st.quickContacts.filterNot { it.number == number } + person)) }
+                    }
+                }
+            }
+        }
+    }
+    Text("Quick text to favourites", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+    SwitchRow(
+        "Favourite people fold out too", s.quickTextEnabled,
+        "Their photos fan out in the middle ring. Slide onto someone and lift to start a text to them.",
+    ) { v -> edit { it.copy(quickTextEnabled = v) } }
+    if (!s.quickTextEnabled) return
+    SwitchRow("Include starred contacts", s.quickTextStarred, "The people you starred in your Contacts app") { v -> edit { it.copy(quickTextStarred = v) } }
+    if (s.quickTextStarred && context.checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        Hint("Allow Contacts on the General tab to use your starred contacts.")
+    }
+    SliderRow("People in the ring", s.quickTextCount.toFloat(), 1f..8f, format = { "${it.roundToInt()}" }) { v -> edit { it.copy(quickTextCount = v.roundToInt()) } }
+    ChoiceRow("Text with", com.thumbshade.app.data.QuickTextApp.entries, s.quickTextApp, { it.label }) { v -> edit { it.copy(quickTextApp = v) } }
+    s.quickContacts.forEach { p ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+            Text(p.name, Modifier.weight(1f), maxLines = 1)
+            Text(p.number, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            IconButton(onClick = { edit { st -> st.copy(quickContacts = st.quickContacts - p) } }) { Icon(Icons.Filled.Delete, "Remove ${p.name}") }
+        }
+    }
+    OutlinedButton(onClick = {
+        runCatching {
+            picker.launch(android.content.Intent(android.content.Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
+        }
+    }, modifier = Modifier.fillMaxWidth()) { Text("Add a person") }
 }
