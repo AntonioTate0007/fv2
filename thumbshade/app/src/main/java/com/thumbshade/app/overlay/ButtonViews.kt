@@ -424,7 +424,12 @@ fun IconCluster(pulse: Int = 0, shadeClosed: Int = 0, drop: Int = 0) {
         if (pulse == 0 || !s.glowNewIcon) return@LaunchedEffect
         val n = ShadeFilter.visible(NotificationRepo.items.value, s).maxByOrNull { it.postTime } ?: return@LaunchedEffect
         glowPkg = n.pkg
-        glowColor = if (n.color != 0) Color(n.color).copy(alpha = 1f) else themeAccent
+        glowColor = when (s.glowColorMode) {
+            com.thumbshade.app.data.GlowColor.RED -> Color(0xFFFF2D2D)
+            com.thumbshade.app.data.GlowColor.CUSTOM -> Color(s.glowCustomColor)
+            com.thumbshade.app.data.GlowColor.THEME -> themeAccent
+            com.thumbshade.app.data.GlowColor.APP -> if (n.color != 0) Color(n.color).copy(alpha = 1f) else themeAccent
+        }
         glow.animateTo(1f, tween(250))
         kotlinx.coroutines.delay(s.glowSeconds.coerceIn(1, 30) * 1000L)
         glow.animateTo(0f, tween(900))

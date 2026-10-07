@@ -527,7 +527,7 @@ private fun cardBrush(s: AppSettings, accent: Color): Brush {
 /** Shape, background, border and click handling shared by every card. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, onLongClick: (() -> Unit)? = null, glow: Float = 0f): Modifier {
+private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, onLongClick: (() -> Unit)? = null, glow: Float = 0f, glowColor: Color = accent): Modifier {
     val shape = RoundedCornerShape(s.cardCornerDp.dp)
     val c = s.card
     val borderColor = if (c.borderFromNotification) accent else Color(c.borderColor)
@@ -537,7 +537,7 @@ private fun Modifier.card(s: AppSettings, accent: Color, onClick: () -> Unit, on
         .background(cardBrush(s, accent), shape)
         .then(if (c.borderWidthDp > 0) Modifier.border(c.borderWidthDp.dp, borderColor, shape) else Modifier)
         // New since you last looked: a glowing edge in the notification's colour.
-        .then(if (glow > 0f) Modifier.border(2.5.dp, accent.copy(alpha = glow), shape).background(accent.copy(alpha = 0.10f * glow), shape) else Modifier)
+        .then(if (glow > 0f) Modifier.border(2.5.dp, glowColor.copy(alpha = glow), shape).background(glowColor.copy(alpha = 0.10f * glow), shape) else Modifier)
         .combinedClickable(onClick = onClick, onLongClick = onLongClick)
 }
 
@@ -682,6 +682,12 @@ private fun CardBody(item: ShadeItem, s: AppSettings, onClose: () -> Unit) {
                 },
                 onLongClick = { panel = if (panel == Panel.MENU) Panel.NONE else Panel.MENU },
                 glow = glowAnim.value * breathe,
+                glowColor = when (s.glowColorMode) {
+                    com.thumbshade.app.data.GlowColor.RED -> Color(0xFFFF2D2D)
+                    com.thumbshade.app.data.GlowColor.CUSTOM -> Color(s.glowCustomColor)
+                    com.thumbshade.app.data.GlowColor.THEME -> MaterialTheme.colorScheme.primary
+                    com.thumbshade.app.data.GlowColor.APP -> accent
+                },
             )
             .padding(horizontal = (c.paddingDp + 2).dp, vertical = c.paddingDp.dp),
     ) {

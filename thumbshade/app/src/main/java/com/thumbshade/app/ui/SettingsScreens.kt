@@ -628,6 +628,10 @@ fun ShadeSettingsScreen() {
         SwitchRow("New notifications glow", s.glowNewCards, "Cards that arrived since you last looked glow when the shade opens") { v -> edit { it.copy(glowNewCards = v) } }
         if (s.glowNewCards || s.glowNewIcon) {
             SliderRow("Glow for", s.glowSeconds.toFloat(), 1f..20f, format = { "${it.roundToInt()} s" }) { v -> edit { it.copy(glowSeconds = v.roundToInt()) } }
+            ChoiceRow("Glow colour", com.thumbshade.app.data.GlowColor.entries, s.glowColorMode, { it.label }) { v -> edit { it.copy(glowColorMode = v) } }
+            if (s.glowColorMode == com.thumbshade.app.data.GlowColor.CUSTOM) {
+                ColorRow("Custom glow colour", s.glowCustomColor) { v -> edit { it.copy(glowCustomColor = v) } }
+            }
         }
         SwitchRow("Swipe to dismiss", s.swipeToDismiss) { v -> edit { it.copy(swipeToDismiss = v) } }
         if (s.swipeToDismiss) {

@@ -192,6 +192,9 @@ enum class QuickTextApp(val label: String) { MESSAGES("Messages (your texting ap
 data class QuickContact(val name: String, val number: String, val photo: String? = null)
 
 @Serializable
+enum class GlowColor(val label: String) { RED("Red"), APP("The app's own colour"), THEME("Theme colour"), CUSTOM("Custom") }
+
+@Serializable
 enum class LongPressAction(val label: String) {
     APP_SWITCHER("Open the app switcher"),
     MOVE("Move the button"),
@@ -333,6 +336,8 @@ data class AppSettings(
     /** Cards that arrived since you last looked glow when the shade opens. */
     val glowNewCards: Boolean = true,
     val glowSeconds: Int = 6,
+    val glowColorMode: GlowColor = GlowColor.RED,
+    val glowCustomColor: Long = 0xFFFF2D2D,
     val monochromeIcons: Boolean = false,
     val snapToEdge: Boolean = true,
     val snapStyle: SnapStyle = SnapStyle.HALF,
