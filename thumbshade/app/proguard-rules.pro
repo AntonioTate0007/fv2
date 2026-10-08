@@ -1,0 +1,2 @@
+-keep class com.thumbshade.app.rules.** { *; }
+-keepattributes *Annotation*, InnerClasses

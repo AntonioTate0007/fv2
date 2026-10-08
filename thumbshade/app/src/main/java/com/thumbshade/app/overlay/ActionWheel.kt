@@ -1,0 +1,337 @@
+package com.thumbshade.app.overlay
+
+import android.content.Context
+import android.view.View
+import android.view.WindowManager
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.VerticalSplit
+import androidx.compose.material.icons.filled.Sms
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.thumbshade.app.data.GestureAction
+import com.thumbshade.app.data.GestureMode
+import com.thumbshade.app.data.GestureType
+import com.thumbshade.app.data.SettingsRepo
+import com.thumbshade.app.notif.AppInfoCache
+import com.thumbshade.app.ui.AppIcon
+import com.thumbshade.app.ui.ThumbTheme
+import com.thumbshade.app.ui.currentAccent
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
+
+/**
+ * The action wheel: press the button, slide onto a slot and lift. Slots sit in three rings that
+ * follow the button's shape; slots that would fall off screen are mirrored to the other side.
+ */
+object ActionWheel {
+    data class Slot(val action: GestureAction, val x: Float, val y: Float, val ring: Int)
+
+    private var view: View? = null
+    private var owner: OverlayOwner? = null
+    private val slotState = androidx.compose.runtime.mutableStateOf<List<Slot>>(emptyList())
+    private var slots: List<Slot>
+        get() = slotState.value
+        set(v) { slotState.value = v }
+    private val selected = mutableIntStateOf(-1)
+    /** Slots from this index on were added later (they fold out on their own). */
+    private val newFrom = mutableIntStateOf(Int.MAX_VALUE)
+    /** The slot held long enough to open in a split/pop-up window (-1 = none). */
+    private val armed = mutableIntStateOf(-1)
+
+    fun selectedAction(): GestureAction? = slots.getOrNull(selected.intValue)?.action
+    fun armSelected() { armed.intValue = selected.intValue }
+    /** True when the slot that will be picked was held for split screen. */
+    fun isArmed(): Boolean = armed.intValue >= 0 && armed.intValue == selected.intValue
+    private var hitRadius = 0f
+    private var baseActions: List<GestureAction> = emptyList()
+    private var geometry: FloatArray? = null
+
+    /** True while the wheel is on screen. */
+    val isOpen: Boolean get() = view != null
+
+    /** Lays out the slots around a button centred at ([cx], [cy]) with half sizes [hw] × [hh]. */
+    fun layout(mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float, density: Float, screenW: Float, screenH: Float): List<Slot> =
+        layout(List(GestureMode.SLOT_COUNT) { mode.slot(it) }, cx, cy, hw, hh, density, screenW, screenH)
+
+    /** [actions] fill the inner ring first, then the middle and outer; NONE leaves a gap. */
+    fun layout(actions: List<GestureAction>, cx: Float, cy: Float, hw: Float, hh: Float, density: Float, screenW: Float, screenH: Float): List<Slot> {
+        val margin = 30f * density
+        val out = mutableListOf<Slot>()
+        var index = 0
+        GestureMode.RINGS.forEachIndexed { ring, count ->
+            val gap = (56f + ring * 60f) * density
+            for (k in 0 until count) {
+                val action = actions.getOrNull(index++) ?: GestureAction()
+                if (action.type == GestureType.NONE) continue
+                // Start at the top and go round; offset alternate rings so slots don't line up.
+                val a = (-Math.PI / 2 + (k + if (ring % 2 == 1) 0.5 else 0.0) * 2 * Math.PI / count).toFloat()
+                var x = cx + cos(a) * (hw + gap)
+                var y = cy + sin(a) * (hh + gap)
+                if (x < margin || x > screenW - margin) x = cx - (x - cx)
+                if (y < margin || y > screenH - margin) y = cy - (y - cy)
+                out += Slot(action, x.coerceIn(margin, screenW - margin), y.coerceIn(margin, screenH - margin), ring)
+            }
+        }
+        return out
+    }
+
+    fun show(context: Context, mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float) =
+        show(context, List(GestureMode.SLOT_COUNT) { mode.slot(it) }, cx, cy, hw, hh)
+
+    /** Opens the wheel with [actions]; the slots fold out from the button one after another. */
+    fun show(context: Context, actions: List<GestureAction>, cx: Float, cy: Float, hw: Float, hh: Float) {
+        end()
+        val wm = context.getSystemService(WindowManager::class.java) ?: return
+        val d = context.resources.displayMetrics
+        slots = layout(actions, cx, cy, hw, hh, d.density, d.widthPixels.toFloat(), d.heightPixels.toFloat())
+        if (slots.isEmpty()) return
+        baseActions = actions
+        geometry = floatArrayOf(cx, cy, hw, hh, d.density, d.widthPixels.toFloat(), d.heightPixels.toFloat())
+        newFrom.intValue = Int.MAX_VALUE
+        hitRadius = 34f * d.density
+        selected.intValue = -1
+        val params = OverlayWindows.params(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            touchable = false,
+            noLimits = true,
+        )
+        val o = OverlayOwner()
+        val v = OverlayWindows.composeView(context, o) { WheelView(slotState.value, Offset(cx, cy), selected.intValue, newFrom.intValue, armed.intValue) }
+        runCatching { wm.addView(v, params) }.onFailure { o.destroy(); return }
+        view = v
+        owner = o
+    }
+
+    /**
+     * Adds [outer] to the open wheel's outer ring (apps keep the inner two); the new slots fold out
+     * on their own. Returns false when nothing was added.
+     */
+    fun extendOuter(outer: List<GestureAction>): Boolean {
+        val g = geometry ?: return false
+        if (view == null || outer.isEmpty()) return false
+        val appSlots = GestureMode.RINGS[0] + GestureMode.RINGS[1]
+        val apps = baseActions.take(appSlots).let { it + List(appSlots - it.size) { GestureAction() } }
+        val before = slots.size
+        val all = layout(apps + outer.take(GestureMode.RINGS[2]), g[0], g[1], g[2], g[3], g[4], g[5], g[6])
+        if (all.size <= before) return false
+        newFrom.intValue = before
+        slots = all
+        return true
+    }
+
+    /** Highlights the slot under the finger. Returns true when the highlighted slot changed. */
+    fun move(x: Float, y: Float): Boolean {
+        val i = slots.indices.minByOrNull { hypot(slots[it].x - x, slots[it].y - y) }
+            ?.takeIf { hypot(slots[it].x - x, slots[it].y - y) <= hitRadius } ?: -1
+        if (i == selected.intValue) return false
+        selected.intValue = i
+        armed.intValue = -1
+        return i >= 0
+    }
+
+    /** Closes the wheel and returns the chosen action, if the finger was on one. */
+    fun end(): GestureAction? {
+        val chosen = slots.getOrNull(selected.intValue)?.action
+        view?.let { v -> runCatching { v.context.getSystemService(WindowManager::class.java)?.removeView(v) } }
+        owner?.destroy()
+        view = null
+        owner = null
+        slots = emptyList()
+        selected.intValue = -1
+        newFrom.intValue = Int.MAX_VALUE
+        armed.intValue = -1
+        geometry = null
+        return chosen
+    }
+}
+
+/**
+ * A favourite person to write to: photo or initials, dimmed until the finger is on it, with a
+ * compose-pencil badge so it reads as "start a message", not "new message from".
+ */
+@Composable
+private fun ContactBubble(a: GestureAction, accent: Color, on: Boolean) {
+    val context = LocalContext.current
+    val photoUri = com.thumbshade.app.access.QuickContacts.photo(a.arg)
+    val bmp by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, photoUri) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.thumbshade.app.access.QuickContacts.photoBitmap(context, photoUri)?.asImageBitmap()
+        }
+    }
+    Box(Modifier.size(36.dp).graphicsLayer { alpha = if (on) 1f else 0.6f }) {
+        val b = bmp
+        if (b != null) {
+            androidx.compose.foundation.Image(
+                b, a.label,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(36.dp).clip(CircleShape),
+            )
+        } else {
+            Box(Modifier.size(36.dp).background(MaterialTheme.colorScheme.outline, CircleShape), contentAlignment = Alignment.Center) {
+                Text(com.thumbshade.app.access.QuickContacts.initials(a.label), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .size(16.dp)
+                .background(MaterialTheme.colorScheme.surface, CircleShape)
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Edit, "Write to", tint = accent, modifier = Modifier.size(12.dp))
+        }
+    }
+}
+
+private fun shortLabel(context: Context, a: GestureAction): String = when (a.type) {
+    GestureType.OPEN_APP, GestureType.OPEN_APP_NOTIFICATION -> AppInfoCache.label(context, a.arg)
+    GestureType.PASTE_TEXT -> "\"" + a.arg.take(12) + "\""
+    else -> a.label.ifBlank { a.type.label }
+}
+
+@Composable
+private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: Int, newFrom: Int = Int.MAX_VALUE, armed: Int = -1) {
+    ThumbTheme {
+        val context = LocalContext.current
+        val accent = Color(currentAccent(context, SettingsRepo.current))
+        val open = remember { Animatable(0f) }
+        LaunchedEffect(Unit) { open.animateTo(1f, tween(380)) }
+        // A later stage (favourites) folds out on its own.
+        val extra = remember { Animatable(0f) }
+        LaunchedEffect(newFrom) {
+            if (newFrom != Int.MAX_VALUE) {
+                extra.snapTo(0f)
+                extra.animateTo(1f, tween(420))
+            }
+        }
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = (open.value * 3f).coerceAtMost(1f) }) {
+            Canvas(Modifier.fillMaxSize()) {
+                // Faint guide lines from the button to each slot.
+                if (open.value >= 1f) slots.forEachIndexed { i, sl ->
+                    drawLine(accent.copy(alpha = if (i == selected) 0.7f else 0.15f), center, Offset(sl.x, sl.y), if (i == selected) 4f else 2f)
+                }
+                drawCircle(accent.copy(alpha = 0.25f), radius = 14f, center = center, style = Stroke(3f))
+            }
+            // Held for split screen: a badge over the slot.
+            slots.getOrNull(armed)?.let { sl ->
+                Box(
+                    Modifier
+                        .offset { IntOffset((sl.x + 14.dp.toPx()).toInt(), (sl.y - 40.dp.toPx()).toInt()) }
+                        .size(26.dp)
+                        .background(accent, CircleShape)
+                        .zIndex(2f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Filled.VerticalSplit, "Split screen",
+                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            slots.forEachIndexed { i, sl ->
+                val on = i == selected
+                val sizeDp = 60.dp
+                // Fold out: each slot travels from the button to its place, a little after the one before.
+                val p = if (i >= newFrom) {
+                    ((extra.value * 1.6f) - (i - newFrom) * 0.6f / (slots.size - newFrom).coerceAtLeast(1)).coerceIn(0f, 1f).let { 1f - (1f - it) * (1f - it) }
+                } else {
+                    ((open.value * 1.6f) - i * 0.6f / slots.size.coerceAtLeast(1)).coerceIn(0f, 1f).let { 1f - (1f - it) * (1f - it) }
+                }
+                Box(
+                    Modifier
+                        .offset {
+                            val x = center.x + (sl.x - center.x) * p
+                            val y = center.y + (sl.y - center.y) * p
+                            IntOffset((x - sizeDp.toPx() / 2).toInt(), (y - sizeDp.toPx() / 2).toInt())
+                        }
+                        .size(sizeDp)
+                        .graphicsLayer { alpha = p }
+                        .scale((0.4f + 0.6f * p) * if (on) 1.18f else 1f)
+                        .background(if (on) accent else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f), CircleShape)
+                        .border(1.5.dp, accent.copy(alpha = 0.6f), CircleShape)
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (sl.action.type == GestureType.OPEN_APP && sl.action.label == com.thumbshade.app.access.RecentApps.PREDICTED) {
+                        Box(Modifier.size(34.dp)) {
+                            AppIcon(sl.action.arg, Modifier.size(34.dp))
+                            // A sparkle: ThumbShade's guess at what you want next.
+                            Text(
+                                "✦",
+                                fontSize = 13.sp,
+                                color = accent,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                    .padding(horizontal = 2.dp),
+                            )
+                        }
+                    } else if (sl.action.type == GestureType.OPEN_APP) {
+                        AppIcon(sl.action.arg, Modifier.size(34.dp))
+                    } else if (sl.action.type == GestureType.QUICK_TEXT) {
+                        ContactBubble(sl.action, accent, on)
+                    } else if (sl.action.type == GestureType.OPEN_APP_NOTIFICATION) {
+                        Box(Modifier.size(34.dp)) {
+                            AppIcon(sl.action.arg, Modifier.size(34.dp))
+                            // A dot: this one opens its newest notification.
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(11.dp)
+                                    .background(MaterialTheme.colorScheme.error, CircleShape)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                            )
+                        }
+                    } else {
+                        Text(
+                            shortLabel(context, sl.action),
+                            fontSize = 9.sp,
+                            lineHeight = 10.sp,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                            color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
