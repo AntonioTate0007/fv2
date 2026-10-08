@@ -19,6 +19,7 @@ import androidx.core.content.IntentCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -45,7 +46,7 @@ class JarvisService : Service() {
 
     enum class Status(val label: String) {
         OFF("Off"),
-        WAITING("Waiting for \"Jarvis\""),
+        WAITING("Ready — say \"Jarvis\" or tap the glasses"),
         LISTENING("Listening…"),
         THINKING("Thinking…"),
         SPEAKING("Speaking"),
@@ -67,10 +68,10 @@ class JarvisService : Service() {
         super.onCreate()
         settings = Settings(this)
         grok = GrokClient(settings)
-        speaker = Speaker(this, settings)
+        speaker = Speaker(this)
         listener = Listener(this)
         glasses = GlassesLink(scope)
-        wake = WakeWord(this) { summon() }
+        wake = WakeWord(this) { persona -> summon(persona) }
 
         createChannel()
         val started = runCatching {
@@ -118,14 +119,17 @@ class JarvisService : Service() {
         super.onDestroy()
     }
 
-    /** Start (or restart, interrupting Jarvis) a conversation turn. */
-    private fun summon() {
+    /**
+     * Start (or restart, interrupting the current answer) a conversation turn.
+     * [persona] is whoever's wake word was spoken; other triggers use the default persona.
+     */
+    private fun summon(persona: Persona = settings.persona) {
         if (speaker.isSpeaking) speaker.stop()
         val previous = conversation
         conversation = scope.launch {
             // Let the interrupted turn finish its cleanup before this one grabs the mic.
             previous?.cancelAndJoin()
-            converse()
+            converse(persona)
         }
     }
 
@@ -135,16 +139,16 @@ class JarvisService : Service() {
         backToWaiting()
     }
 
-    private suspend fun converse() {
+    private suspend fun converse(persona: Persona) {
         wake.pause()
         try {
             if (settings.xaiKey.isBlank()) {
-                say("I'm afraid I need an xAI API key before I can think, ${settings.honorific}. Please add one in the app.", useGrokVoice = false)
+                say("I'm afraid I need an xAI API key before I can think, ${settings.honorific}. Please add one in the app.", persona, useGrokVoice = false)
                 return
             }
             var turns = 0
             do {
-                val heard = listenWithPhoto() ?: break
+                val heard = listenWithCamera() ?: break
                 turns++
                 val question = heard.first.cleanQuestion()
                 if (question.isEmpty() || question.isDismissal()) break
@@ -152,49 +156,50 @@ class JarvisService : Service() {
 
                 setStatus(Status.THINKING)
                 val answer = try {
-                    grok.ask(question, heard.second)
+                    grok.ask(question, heard.second, persona)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "Grok failed", e)
                     log("Error: ${e.message}")
-                    say("Apologies, ${settings.honorific}, I couldn't reach Grok. ${e.message ?: ""}".take(220), useGrokVoice = false)
+                    say("Apologies, ${settings.honorific}, I couldn't reach Grok. ${e.message ?: ""}".take(220), persona, useGrokVoice = false)
                     break
                 }
-                log("Jarvis: $answer")
-                say(answer, useGrokVoice = settings.grokVoice)
+                log("${persona.displayName}: $answer")
+                say(answer, persona, useGrokVoice = settings.grokVoice)
             } while (settings.followUps && turns < MAX_FOLLOW_UPS)
         } finally {
             backToWaiting()
         }
     }
 
-    /** Listens on the phone mic while (in parallel) the glasses camera takes photos. */
-    private suspend fun listenWithPhoto(): Pair<String, ByteArray?>? = coroutineScope {
+    /** Listens on the phone mic while (in parallel) the glasses camera takes photos / a short clip. */
+    private suspend fun listenWithCamera(): Pair<String, List<ByteArray>>? = coroutineScope {
         setStatus(Status.LISTENING)
         val stillTalking = AtomicBoolean(true)
-        val photo = if (settings.useCamera && glasses.isRegistered) {
-            async { runCatching { glasses.captureSharpest { stillTalking.get() } }.getOrNull() }
+        val video = settings.videoMode
+        val capture: Deferred<List<ByteArray>>? = if (settings.useCamera && glasses.isRegistered) {
+            async { runCatching { glasses.captureFrames(video) { stillTalking.get() } }.getOrDefault(emptyList()) }
         } else null
 
         val text = listener.listen()
         stillTalking.set(false)
         if (text.isNullOrBlank()) {
-            photo?.cancel()
+            capture?.cancel()
             return@coroutineScope null
         }
-        val jpeg = photo?.let { withTimeoutOrNull(PHOTO_WAIT_MS) { it.await() } }
-        photo?.cancel()
-        text to jpeg
+        val frames = capture?.let { withTimeoutOrNull(PHOTO_WAIT_MS) { it.await() } }.orEmpty()
+        capture?.cancel()
+        text to frames
     }
 
-    private suspend fun say(text: String, useGrokVoice: Boolean) {
+    private suspend fun say(text: String, persona: Persona, useGrokVoice: Boolean) {
         setStatus(Status.SPEAKING)
         // Let "Jarvis" interrupt a long answer.
         wake.resume()
         try {
             if (useGrokVoice) {
-                val mp3 = runCatching { grok.speak(text) }
+                val mp3 = runCatching { grok.speak(text, persona) }
                     .onFailure { Log.w(TAG, "Grok TTS failed, using phone voice", it) }
                     .getOrNull()
                 if (mp3 != null) {
@@ -202,7 +207,7 @@ class JarvisService : Service() {
                     return
                 }
             }
-            speaker.sayLocally(text)
+            speaker.sayLocally(text, persona)
         } finally {
             wake.pause()
         }
@@ -216,6 +221,9 @@ class JarvisService : Service() {
     private fun reloadWakeWord() {
         wake.init(settings.picovoiceKey)
         wake.problem?.let { log(it) }
+        wake.listeningFor.takeIf { it.isNotEmpty() }?.let { names ->
+            log("Listening for: " + names.joinToString(" or ") { "\"${it.displayName}\"" })
+        }
         if (conversation?.isActive != true) wake.resume()
     }
 

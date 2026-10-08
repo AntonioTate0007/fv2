@@ -18,7 +18,7 @@ import java.util.Locale
  * Plays Jarvis's voice. Audio goes out as normal media, so with the glasses
  * connected over Bluetooth it comes out of the glasses' open-ear speakers.
  */
-class Speaker(private val context: Context, private val settings: Settings) {
+class Speaker(private val context: Context) {
 
     private val audio = context.getSystemService(AudioManager::class.java)!!
     private val attrs = AudioAttributes.Builder()
@@ -74,7 +74,7 @@ class Speaker(private val context: Context, private val settings: Settings) {
     }
 
     /** Speaks [text] with the phone's own (offline) text-to-speech engine. */
-    suspend fun sayLocally(text: String) {
+    suspend fun sayLocally(text: String, persona: Persona) {
         if (!ttsReady.await()) return
         val engine = tts ?: return
         val finished = CompletableDeferred<Unit>()
@@ -84,8 +84,8 @@ class Speaker(private val context: Context, private val settings: Settings) {
             audio.requestAudioFocus(focus)
             engine.setAudioAttributes(attrs)
             // Ultron: slower and much deeper than JARVIS.
-            engine.setPitch(if (settings.isUltron) 0.6f else 0.9f)
-            engine.setSpeechRate(if (settings.isUltron) 0.9f else 1.05f)
+            engine.setPitch(if (persona == Persona.ULTRON) 0.6f else 0.9f)
+            engine.setSpeechRate(if (persona == Persona.ULTRON) 0.9f else 1.05f)
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
                 override fun onDone(utteranceId: String?) { finished.complete(Unit) }

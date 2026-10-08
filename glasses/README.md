@@ -19,10 +19,13 @@ No jailbreak needed: it uses Meta's official
 
 | Trigger | Needs |
 |---|---|
-| Say **"Jarvis"** | Free Picovoice AccessKey (wake word runs on the phone, offline) |
+| Say **"Jarvis"** → Jarvis answers | Free Picovoice AccessKey (wake word runs on the phone, offline) |
+| Say **"Ultron"** → Ultron answers | Same key + an "Ultron" keyword file you train for free (see below) |
 | **Tap the glasses' touchpad** (when no music is playing) | Nothing |
 | **Talk** button in the notification or the app | Nothing |
 | Glasses button / gesture events (models that report them) | Nothing |
+
+Taps, buttons and the notification use the **default persona** (set in the app).
 
 Say "Jarvis" or tap again while he's talking to interrupt. Say "stop", "never mind" or
 "that's all" to end the conversation.
@@ -65,21 +68,39 @@ Put the glasses on and say **"Jarvis… what am I looking at?"**
 
 | Setting | Default | Notes |
 |---|---|---|
+| Default persona | `jarvis` | `ultron` = cold, theatrical, menacing wit (still helpful). Saying a persona's wake word always picks that persona. |
+| Jarvis's / Ultron's Grok voice | `leo` / `rex` | `leo` (authoritative), `rex` (confident), `sal`, `ara`, `eve`, or a custom xAI voice ID |
+| They call you | `sir` | "ma'am", "boss", your name… |
 | Grok model | `grok-4.7` | Any **vision-capable** model id from <https://docs.x.ai/developers/models>. A 404 error means the id is wrong. |
-| Personality | `jarvis` | `ultron` = cold, theatrical, menacing wit (still helpful), deeper `rex` voice |
-| Grok voice | `leo` (Jarvis) / `rex` (Ultron) | `leo` (authoritative), `rex` (confident), `sal`, `ara`, `eve` |
-| Jarvis calls you | `sir` | "ma'am", "boss", your name… |
-| Speak with Grok's voice | on | Off = the phone's free offline British TTS voice (also used automatically if xAI TTS fails) |
-| Keep listening for follow-ups | on | After answering, listens again without the wake word until you go quiet |
+| Search the web and X | on | Grok looks things up when a question needs live info (news, weather, scores, prices, opening hours). If search fails, it answers without it. |
 | Send what the glasses see | on | Off = voice-only Grok, no camera |
+| Video mode | off | Sends a 4-frame clip, in time order, instead of the single sharpest photo. Better for "what just happened?" or things that move; a bit slower and pricier. |
+| Speak with Grok's voice | on | Off = the phone's free offline voice (also used automatically if xAI TTS fails) |
+| Keep listening for follow-ups | on | After answering, listens again without the wake word until you go quiet |
+
+### "Ultron" wake word
+
+Porcupine has "Jarvis" built in, but not "Ultron". To wake Ultron by name:
+
+1. Sign in at <https://console.picovoice.ai> (same account as your AccessKey).
+2. Open **Porcupine**, type `Ultron`, choose language **English** and platform **Android**, then train and download.
+3. Unzip the download and copy the `.ppn` file to your phone.
+4. In the app, tap **Import "Ultron" wake word** and pick the file.
+
+The app then listens for both names at once.
+
+### About video
+
+xAI's API doesn't take a live video stream (Gemini Live does). Video mode is the closest
+match: frames from the few seconds while you're talking are sent as a short clip.
 
 ### About voices
 
 The voices are xAI's stock voices plus a pitched-down phone voice. The app doesn't clone
 any actor's voice (for example James Spader's Ultron, or Paul Bettany's JARVIS). Copying a
 real person's voice without their permission raises consent and publicity-rights problems.
-The wake word stays "Jarvis" (Porcupine's built-in keyword). A custom "Ultron" wake word
-can be trained for free in the Picovoice console, but the app would need a small change to load it.
+xAI custom voices made from recordings of someone who agrees (yourself, a friend) can be
+used by pasting their voice ID into a voice setting.
 
 ## Privacy
 
@@ -105,9 +126,10 @@ can be trained for free in the Picovoice console, but the app would need a small
 | File | Job |
 |---|---|
 | `JarvisService.kt` | Foreground service: wake word → listen + photo → Grok → speak → follow-ups |
-| `GlassesLink.kt` | Meta SDK session, camera stream, sharpest-of-N photo, glasses input events |
-| `GrokClient.kt` | xAI chat completions (with image + memory) and xAI text-to-speech |
-| `Speaker.kt` | Plays Grok's MP3 voice, or a British Android TTS fallback |
+| `GlassesLink.kt` | Meta SDK session, camera stream, sharpest photo or 4-frame clip, glasses input events |
+| `GrokClient.kt` | xAI Responses API with web + X search (falls back to chat completions), images, memory, personas, text-to-speech |
+| `Speaker.kt` | Plays Grok's MP3 voice, or an Android TTS fallback (deeper for Ultron) |
 | `Listener.kt` | Android speech-to-text on the phone mic |
-| `WakeWord.kt` | Porcupine built-in "Jarvis" hotword |
+| `WakeWord.kt` | Porcupine hotwords: built-in "Jarvis" + optional custom "Ultron", each picking its persona |
+| `Settings.kt` | Personas and all user settings |
 | `MainActivity.kt` | Setup screen |

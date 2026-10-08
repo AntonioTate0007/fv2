@@ -94,15 +94,21 @@ class GlassesLink(private val scope: CoroutineScope) {
     }
 
     /**
-     * Turns the glasses camera on, takes photos while [keepShooting] stays true
-     * (at most [maxShots]) and returns the sharpest one as a JPEG, or null if
-     * the camera isn't available.
+     * Turns the glasses camera on and takes photos while [keepShooting] stays true.
+     *
+     * - Photo mode: up to 3 shots, returns only the sharpest (motion blur is common
+     *   when you're moving your head).
+     * - Video mode: up to [VIDEO_FRAMES] shots (at least 2), all returned in time
+     *   order so Grok can follow what happens — the closest thing to live video the
+     *   xAI API accepts.
+     *
+     * Returns an empty list if the camera isn't available.
      */
-    suspend fun captureSharpest(maxShots: Int = 3, keepShooting: () -> Boolean): ByteArray? {
-        val s = ensureSession() ?: return null
+    suspend fun captureFrames(video: Boolean, keepShooting: () -> Boolean): List<ByteArray> {
+        val s = ensureSession() ?: return emptyList()
         val camera = s.addCamera(StreamConfiguration(videoQuality = VideoQuality.HIGH, frameRate = 15))
             .onFailure { error, _ -> Log.w(TAG, "addCamera failed: ${error.description}") }
-            .getOrNull() ?: return null
+            .getOrNull() ?: return emptyList()
         val stream = camera.stream
         // Drain frames so the SDK's pipeline keeps flowing; we only want stills.
         val drain = scope.launch { stream.videoStream.collect { } }
@@ -111,26 +117,23 @@ class GlassesLink(private val scope: CoroutineScope) {
             val streaming = withTimeoutOrNull(STREAM_TIMEOUT_MS) {
                 stream.state.first { it == StreamState.STREAMING || it == StreamState.STOPPED || it == StreamState.CLOSED }
             }
-            if (streaming != StreamState.STREAMING) return null
+            if (streaming != StreamState.STREAMING) return emptyList()
 
-            var best: Bitmap? = null
-            var bestScore = -1.0
-            var shots = 0
+            val maxShots = if (video) VIDEO_FRAMES else PHOTO_SHOTS
+            val minShots = if (video) 2 else 1
+            val shotsTaken = mutableListOf<Bitmap>()
+            var attempts = 0
             do {
-                val bitmap = stream.capturePhoto()
+                stream.capturePhoto()
                     .onFailure { error, _ -> Log.w(TAG, "capturePhoto failed: ${error.description}") }
                     .getOrNull()
                     ?.let(::toBitmap)
-                shots++
-                if (bitmap != null) {
-                    val score = sharpness(bitmap)
-                    if (score > bestScore) {
-                        best = bitmap
-                        bestScore = score
-                    }
-                }
-            } while (shots < maxShots && keepShooting())
-            return best?.let(::toJpeg)
+                    ?.let(shotsTaken::add)
+                attempts++
+            } while (attempts < maxShots && (keepShooting() || attempts < minShots))
+
+            if (video) return shotsTaken.map { toJpeg(it, VIDEO_EDGE) }
+            return listOfNotNull(shotsTaken.maxByOrNull(::sharpness)?.let { toJpeg(it, PHOTO_EDGE) })
         } finally {
             drain.cancel()
             runCatching { stream.stop() }
@@ -154,8 +157,8 @@ class GlassesLink(private val scope: CoroutineScope) {
     }
 
     /** Downscale to keep uploads fast; Grok doesn't need full resolution. */
-    private fun toJpeg(src: Bitmap): ByteArray {
-        val scale = MAX_UPLOAD_EDGE.toFloat() / max(src.width, src.height)
+    private fun toJpeg(src: Bitmap, maxEdge: Int): ByteArray {
+        val scale = maxEdge.toFloat() / max(src.width, src.height)
         val bmp = if (scale < 1f) {
             Bitmap.createScaledBitmap(src, (src.width * scale).toInt(), (src.height * scale).toInt(), true)
         } else src
@@ -191,6 +194,9 @@ class GlassesLink(private val scope: CoroutineScope) {
         const val TAG = "GlassesLink"
         const val SESSION_TIMEOUT_MS = 15_000L
         const val STREAM_TIMEOUT_MS = 8_000L
-        const val MAX_UPLOAD_EDGE = 1280
+        const val PHOTO_SHOTS = 3
+        const val PHOTO_EDGE = 1280
+        const val VIDEO_FRAMES = 4
+        const val VIDEO_EDGE = 768 // smaller frames keep a 4-frame clip fast and cheap
     }
 }

@@ -36,6 +36,20 @@ class MainActivity : ComponentActivity() {
     private lateinit var statusView: TextView
     private lateinit var glassesView: TextView
     private lateinit var transcriptView: TextView
+    private lateinit var ultronView: TextView
+
+    /** Copies a Picovoice "Ultron" keyword file into the app's private storage. */
+    private val importUltronKeyword = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val ok = runCatching {
+            contentResolver.openInputStream(uri)!!.use { input ->
+                WakeWord.ultronKeywordFile(this).outputStream().use { input.copyTo(it) }
+            }
+        }.isSuccess
+        toast(if (ok) "Ultron wake word imported" else "Couldn't read that file")
+        refreshUltronStatus()
+        reloadServiceIfRunning()
+    }
 
     private val phonePermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -165,38 +179,52 @@ class MainActivity : ComponentActivity() {
 
         col.addView(header("Keys"))
         val xai = field("xAI API key (console.x.ai)", settings.xaiKey, secret = true)
-        val pico = field("Picovoice AccessKey for \"Jarvis\" wake word (console.picovoice.ai)", settings.picovoiceKey, secret = true)
+        val pico = field("Picovoice AccessKey for wake words (console.picovoice.ai)", settings.picovoiceKey, secret = true)
         col.addView(xai.first); col.addView(xai.second)
         col.addView(pico.first); col.addView(pico.second)
 
-        col.addView(header("Personality"))
+        col.addView(header("Personas"))
+        col.addView(text(
+            "Say \"Jarvis\" for Jarvis. To also wake Ultron by name, train the word \"Ultron\" " +
+                "(platform: Android) at console.picovoice.ai and import the .ppn file below. " +
+                "Taps and the notification button use the default persona.",
+            13f, "#8FB3C4",
+        ))
+        ultronView = text("", 13f, "#B8F3FF").apply { setPadding(0, dp(4), 0, 0) }
+        col.addView(ultronView)
+        refreshUltronStatus()
+        col.addView(button("Import \"Ultron\" wake word (.ppn)") {
+            importUltronKeyword.launch(arrayOf("*/*"))
+        })
+        val persona = field("Default persona: jarvis or ultron", settings.persona.name.lowercase())
+        val jarvisVoice = field("Jarvis's Grok voice: leo, rex, sal, ara, eve", settings.voiceFor(Persona.JARVIS))
+        val ultronVoice = field("Ultron's Grok voice", settings.voiceFor(Persona.ULTRON))
+        val honorific = field("They call you", settings.honorific)
         val model = field("Grok model", settings.model)
-        val voice = field("Grok voice: leo, rex, sal, ara, eve (blank = persona default)", settings.voice)
-        val honorific = field("Jarvis calls you", settings.honorific)
-        val persona = field("Personality: jarvis or ultron", settings.persona)
-        listOf(persona, model, voice, honorific).forEach { col.addView(it.first); col.addView(it.second) }
+        listOf(persona, jarvisVoice, ultronVoice, honorific, model).forEach { col.addView(it.first); col.addView(it.second) }
 
-        val grokVoice = switch("Speak with Grok's voice (off = phone's British voice)", settings.grokVoice)
-        val followUps = switch("Keep listening for follow-up questions", settings.followUps)
+        col.addView(header("Abilities"))
+        val webSearch = switch("Search the web and X for live info (news, weather, scores)", settings.webSearch)
         val camera = switch("Send what the glasses see", settings.useCamera)
-        listOf(grokVoice, followUps, camera).forEach(col::addView)
+        val video = switch("Video mode: send a short clip (4 frames) instead of one photo", settings.videoMode)
+        val grokVoice = switch("Speak with Grok's voice (off = phone's voice)", settings.grokVoice)
+        val followUps = switch("Keep listening for follow-up questions", settings.followUps)
+        listOf(webSearch, camera, video, grokVoice, followUps).forEach(col::addView)
 
         col.addView(button("Save settings") {
             settings.xaiKey = xai.second.text.toString()
             settings.picovoiceKey = pico.second.text.toString()
             settings.model = model.second.text.toString()
-            // An untouched default voice follows the personality (leo for Jarvis, rex for Ultron).
-            val oldDefault = if (settings.isUltron) Settings.ULTRON_VOICE else Settings.DEFAULT_VOICE
-            val pickedVoice = voice.second.text.toString().trim().lowercase()
-            settings.voice = if (pickedVoice == oldDefault) "" else pickedVoice
+            settings.persona = Persona.parse(persona.second.text.toString())
+            settings.setVoice(Persona.JARVIS, jarvisVoice.second.text.toString())
+            settings.setVoice(Persona.ULTRON, ultronVoice.second.text.toString())
             settings.honorific = honorific.second.text.toString()
-            settings.persona = persona.second.text.toString()
+            settings.webSearch = webSearch.isChecked
+            settings.useCamera = camera.isChecked
+            settings.videoMode = video.isChecked
             settings.grokVoice = grokVoice.isChecked
             settings.followUps = followUps.isChecked
-            settings.useCamera = camera.isChecked
-            if (JarvisService.status.value != JarvisService.Status.OFF) {
-                JarvisService.send(this, JarvisService.ACTION_RELOAD)
-            }
+            reloadServiceIfRunning()
             toast("Saved")
         })
 
@@ -207,6 +235,20 @@ class MainActivity : ComponentActivity() {
         return ScrollView(this).apply {
             setBackgroundColor(Color.parseColor("#0B1620"))
             addView(col)
+        }
+    }
+
+    private fun reloadServiceIfRunning() {
+        if (JarvisService.status.value != JarvisService.Status.OFF) {
+            JarvisService.send(this, JarvisService.ACTION_RELOAD)
+        }
+    }
+
+    private fun refreshUltronStatus() {
+        ultronView.text = if (WakeWord.ultronKeywordFile(this).exists()) {
+            "\"Ultron\" wake word: imported ✓"
+        } else {
+            "\"Ultron\" wake word: not imported (Ultron answers taps if he's the default persona)"
         }
     }
 
