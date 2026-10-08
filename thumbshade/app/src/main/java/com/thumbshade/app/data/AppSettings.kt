@@ -238,7 +238,12 @@ enum class EdgeStyle(val label: String, val aroundButton: Boolean = false) {
 }
 
 @Serializable
-enum class EdgeColorMode(val label: String) { NOTIFICATION("Notification colour"), ACCENT("Theme accent"), CUSTOM("Custom") }
+enum class EdgeColorMode(val label: String) {
+    NOTIFICATION("Notification colour"),
+    APP_ICON("The app's icon colours"),
+    ACCENT("Theme accent"),
+    CUSTOM("Custom"),
+}
 
 @Serializable
 enum class ClusterSide(val label: String) { RING("Ring around"), ABOVE("Above"), SIDE("Beside") }

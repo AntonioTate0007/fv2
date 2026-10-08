@@ -678,6 +678,7 @@ fun ShadeSettingsScreen() {
         Hint("The border and button effects play together; the button effect follows the button's shape.")
         ChoiceRow("Colour", EdgeColorMode.entries, s.edgeColorMode, { it.label }) { v -> edit { it.copy(edgeColorMode = v) } }
         if (s.edgeColorMode == EdgeColorMode.CUSTOM) ColorRow("Custom colour", s.edgeCustomColor) { c -> edit { it.copy(edgeCustomColor = c) } }
+        if (s.edgeColorMode == EdgeColorMode.APP_ICON) Hint("The light takes the main colours of the app's icon and shimmers through them. Grey icons fall back to the notification's colour.")
         SliderRow("Duration", s.edgeDurationMs / 1000f, 1f..10f, format = { "%.1f s".format(it) }) { v -> edit { it.copy(edgeDurationMs = (v * 1000).roundToInt()) } }
         SliderRow("Thickness", s.edgeThicknessDp.toFloat(), 2f..16f, format = { "${it.roundToInt()} dp" }) { v -> edit { it.copy(edgeThicknessDp = v.roundToInt()) } }
         SwitchRow("Wake the screen", s.edgeWakeScreen) { v -> edit { it.copy(edgeWakeScreen = v) } }

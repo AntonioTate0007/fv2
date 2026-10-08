@@ -1,5 +1,6 @@
 package com.thumbshade.app.overlay
 
+import androidx.core.graphics.drawable.toBitmap
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -64,15 +65,37 @@ object EdgeLight {
         }
         val border = styleOverride?.let { runCatching { EdgeStyle.valueOf(it) }.getOrNull() } ?: s.edgeStyle
         val buttonFx = if (styleOverride == null) s.buttonEffect else null
-        main.post { show(context.applicationContext, border, buttonFx, color, s.edgeDurationMs.toLong(), s.edgeThicknessDp, s.edgeWakeScreen) }
+        // The app's icon colours: the light shimmers through them (a rule's own colour still wins).
+        val palette = if (colorOverride == null && s.edgeColorMode == EdgeColorMode.APP_ICON) iconColors(context, item.pkg) else emptyList()
+        val main1 = palette.firstOrNull() ?: color
+        main.post { show(context.applicationContext, border, buttonFx, main1, s.edgeDurationMs.toLong(), s.edgeThicknessDp, s.edgeWakeScreen, palette) }
+    }
+
+    private val paletteCache = java.util.concurrent.ConcurrentHashMap<String, List<Color>>()
+
+    /** The main colours of [pkg]'s icon (as shown, so icon packs count), cached. */
+    fun iconColors(context: Context, pkg: String): List<Color> = paletteCache.getOrPut(pkg + ":" + com.thumbshade.app.icons.IconStore.version.value) {
+        runCatching {
+            val d = com.thumbshade.app.notif.AppInfoCache.icon(context, pkg) ?: return@runCatching emptyList()
+            val bmp = d.toBitmap(48, 48)
+            val px = IntArray(48 * 48)
+            bmp.getPixels(px, 0, 48, 0, 0, 48, 48)
+            IconPalette.extract(px, 4).map { Color(it) }
+        }.getOrDefault(emptyList())
     }
 
     fun preview(context: Context) {
         val s = SettingsRepo.current
-        show(context.applicationContext, s.edgeStyle, s.buttonEffect, if (s.edgeColorMode == EdgeColorMode.CUSTOM) Color(s.edgeCustomColor) else Color(com.thumbshade.app.ui.currentAccent(context, s)), s.edgeDurationMs.toLong(), s.edgeThicknessDp, false)
+        // For the app-colours mode, preview with the newest notification's app.
+        val palette = if (s.edgeColorMode == EdgeColorMode.APP_ICON) {
+            com.thumbshade.app.notif.NotificationRepo.items.value.maxByOrNull { it.postTime }?.let { iconColors(context, it.pkg) }.orEmpty()
+                .ifEmpty { listOf(Color(0xFF4285F4), Color(0xFFEA4335), Color(0xFFFBBC05), Color(0xFF34A853)) }
+        } else emptyList()
+        val color = palette.firstOrNull() ?: if (s.edgeColorMode == EdgeColorMode.CUSTOM) Color(s.edgeCustomColor) else Color(com.thumbshade.app.ui.currentAccent(context, s))
+        show(context.applicationContext, s.edgeStyle, s.buttonEffect, color, s.edgeDurationMs.toLong(), s.edgeThicknessDp, false, palette)
     }
 
-    private fun show(context: Context, border: EdgeStyle, buttonFx: EdgeStyle?, color: Color, durationMs: Long, thicknessDp: Int, wake: Boolean) {
+    private fun show(context: Context, border: EdgeStyle, buttonFx: EdgeStyle?, color: Color, durationMs: Long, thicknessDp: Int, wake: Boolean, palette: List<Color> = emptyList()) {
         dismiss(context)
         if (wake) {
             runCatching {
@@ -97,6 +120,7 @@ object EdgeLight {
                 border = if (border.aroundButton) null else border,
                 buttonFx = buttonFx?.takeIf { it.aroundButton && center != null } ?: border.takeIf { it.aroundButton && center != null },
                 color = color,
+                palette = palette,
                 durationMs = durationMs,
                 thicknessDp = thicknessDp,
                 buttonCenter = center?.let { Offset(it.first.toFloat(), it.second.toFloat()) },
@@ -123,6 +147,7 @@ private fun EdgeCanvas(
     border: EdgeStyle?,
     buttonFx: EdgeStyle?,
     color: Color,
+    palette: List<Color>,
     durationMs: Long,
     thicknessDp: Int,
     buttonCenter: Offset?,
@@ -150,9 +175,40 @@ private fun EdgeCanvas(
     Canvas(Modifier.fillMaxSize()) {
         val stroke = thicknessDp.dp.toPx()
         val corner = 36.dp.toPx()
-        if (border != null) drawBorder(border, color, envelope, phase, stroke, corner, flicker)
-        if (buttonFx != null && buttonCenter != null) drawButtonFx(buttonFx, color, envelope, phase, buttonCenter, buttonHalf)
+        if (palette.size < 2) {
+            if (border != null) drawBorder(border, color, envelope, phase, stroke, corner, flicker)
+            if (buttonFx != null && buttonCenter != null) drawButtonFx(buttonFx, color, envelope, phase, buttonCenter, buttonHalf)
+        } else {
+            // App colours: draw each effect as usual, then repaint what it drew with a slowly
+            // turning sweep of the icon's colours, keeping the effect's shape and fade.
+            val loop = (palette + palette.first()).toTypedArray()
+            if (border != null) recolored(sweep(loop, Offset(size.width / 2, size.height / 2), phase)) {
+                drawBorder(border, color, envelope, phase, stroke, corner, flicker)
+            }
+            if (buttonFx != null && buttonCenter != null) recolored(sweep(loop, buttonCenter, phase)) {
+                drawButtonFx(buttonFx, color, envelope, phase, buttonCenter, buttonHalf)
+            }
+        }
     }
+}
+
+private fun sweep(colors: Array<Color>, center: Offset, phase: Float): Brush {
+    val n = colors.size - 1
+    // Shift the stops round with the phase so the colours travel.
+    val stops = colors.mapIndexed { i, c -> ((i.toFloat() / n + phase) % 1f) to c }.sortedBy { it.first }
+    val first = stops.first()
+    val last = stops.last()
+    val wrapped = listOf(0f to last.second) + stops + listOf(1f to first.second)
+    return Brush.sweepGradient(*wrapped.toTypedArray(), center = center)
+}
+
+/** Draws [block] into its own layer, then paints [brush] only where it drew (keeping its alpha). */
+private inline fun DrawScope.recolored(brush: Brush, block: DrawScope.() -> Unit) {
+    val canvas = drawContext.canvas
+    canvas.saveLayer(androidx.compose.ui.geometry.Rect(Offset.Zero, size), androidx.compose.ui.graphics.Paint())
+    block()
+    drawRect(brush, blendMode = androidx.compose.ui.graphics.BlendMode.SrcIn)
+    canvas.restore()
 }
 
 private fun DrawScope.borderPath(inset: Float, corner: Float): Path = Path().apply {
