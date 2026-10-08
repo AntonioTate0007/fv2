@@ -355,4 +355,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+    
+    /** Adds a line to the transcript view for test result visibility. */
+    private fun log(line: String) {
+        if (::transcriptView.isInitialized) {
+            val current = transcriptView.text.toString().split("\n\n").filter { it.isNotBlank() }
+            transcriptView.text = (current + line).takeLast(12).joinToString("\n\n")
+        }
+    }
 }
