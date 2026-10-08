@@ -183,13 +183,14 @@ fun ButtonScreen() {
         ChoiceRow("How to move the button", com.thumbshade.app.data.MoveGesture.entries, s.moveGesture, { it.label }) { v -> edit { it.copy(moveGesture = v) } }
         Hint(
             when (s.moveGesture) {
-                com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD -> "Press and keep holding still. The app switcher opens first; keep holding and it gives way with a buzz, then the button follows your finger."
+                com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD -> "Press and keep holding still: the app switcher opens, then your favourite people fold out, then (holding even longer) the switcher gives way with a buzz and the button follows your finger."
                 com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD -> "Tap the button, then tap again and keep holding: it follows your finger. Single taps wait a moment for a possible second tap."
                 com.thumbshade.app.data.MoveGesture.LONG_PRESS -> "Long-press, then drag. (The app switcher then needs \"Long press\" set to it, and holding still a while longer moves the button.)"
             }
         )
         if (s.moveGesture == com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD) {
-            SliderRow("Hold for", s.moveHoldMs / 1000f, 0.5f..4f, format = { "%.1f s longer".format(it) }) { v -> edit { it.copy(moveHoldMs = (v * 1000).roundToInt()) } }
+            SliderRow("Favourites after", s.moveHoldMs / 1000f, 0.5f..4f, format = { "%.1f s more".format(it) }) { v -> edit { it.copy(moveHoldMs = (v * 1000).roundToInt()) } }
+            SliderRow("Move after", s.moveExtraMs / 1000f, 0.5f..4f, format = { "%.1f s more".format(it) }) { v -> edit { it.copy(moveExtraMs = (v * 1000).roundToInt()) } }
         }
         SwitchRow(
             "Snap to edges",
@@ -353,7 +354,7 @@ fun ButtonScreen() {
         if (s.longPressAction == com.thumbshade.app.data.LongPressAction.APP_SWITCHER) {
             Hint(
                 if (s.moveGesture == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Move the button with double-tap and hold."
-                else "Hold the button: your recent apps fold out around it. Slide onto one and lift to switch. Keep holding still to move the button instead."
+                else "Hold the button: your apps fold out around it. Slide onto one and lift to switch. Keep holding still and your favourite people fold out in the outer ring; hold even longer to move the button."
             )
             ChoiceRow("Show in the switcher", com.thumbshade.app.data.SwitcherSource.entries, s.switcherSource, { it.label }) { v -> edit { it.copy(switcherSource = v) } }
             Hint("✦ marks apps ThumbShade predicts you'll want next. Apps with notifications have a dot; picking one opens its newest notification, straight into the chat or email.")
@@ -893,7 +894,7 @@ private fun QuickTextSettings(s: AppSettings) {
     Text("Quick text to favourites", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
     SwitchRow(
         "Favourite people fold out too", s.quickTextEnabled,
-        "They sit apart in the outer ring with a pencil badge. Slide onto someone and lift to start a text to them.",
+        "Keep holding after the switcher opens and they fold out in the outer ring with a pencil badge. Slide onto someone and lift to start a text.",
     ) { v -> edit { it.copy(quickTextEnabled = v) } }
     if (!s.quickTextEnabled) return
     SwitchRow("Include starred contacts", s.quickTextStarred, "The people you starred in your Contacts app") { v -> edit { it.copy(quickTextStarred = v) } }

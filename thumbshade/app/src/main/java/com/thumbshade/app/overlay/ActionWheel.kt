@@ -60,9 +60,19 @@ object ActionWheel {
 
     private var view: View? = null
     private var owner: OverlayOwner? = null
-    private var slots: List<Slot> = emptyList()
+    private val slotState = androidx.compose.runtime.mutableStateOf<List<Slot>>(emptyList())
+    private var slots: List<Slot>
+        get() = slotState.value
+        set(v) { slotState.value = v }
     private val selected = mutableIntStateOf(-1)
+    /** Slots from this index on were added later (they fold out on their own). */
+    private val newFrom = mutableIntStateOf(Int.MAX_VALUE)
     private var hitRadius = 0f
+    private var baseActions: List<GestureAction> = emptyList()
+    private var geometry: FloatArray? = null
+
+    /** True while the wheel is on screen. */
+    val isOpen: Boolean get() = view != null
 
     /** Lays out the slots around a button centred at ([cx], [cy]) with half sizes [hw] × [hh]. */
     fun layout(mode: GestureMode, cx: Float, cy: Float, hw: Float, hh: Float, density: Float, screenW: Float, screenH: Float): List<Slot> =
@@ -100,6 +110,9 @@ object ActionWheel {
         val d = context.resources.displayMetrics
         slots = layout(actions, cx, cy, hw, hh, d.density, d.widthPixels.toFloat(), d.heightPixels.toFloat())
         if (slots.isEmpty()) return
+        baseActions = actions
+        geometry = floatArrayOf(cx, cy, hw, hh, d.density, d.widthPixels.toFloat(), d.heightPixels.toFloat())
+        newFrom.intValue = Int.MAX_VALUE
         hitRadius = 34f * d.density
         selected.intValue = -1
         val params = OverlayWindows.params(
@@ -109,10 +122,27 @@ object ActionWheel {
             noLimits = true,
         )
         val o = OverlayOwner()
-        val v = OverlayWindows.composeView(context, o) { WheelView(slots, Offset(cx, cy), selected.intValue) }
+        val v = OverlayWindows.composeView(context, o) { WheelView(slotState.value, Offset(cx, cy), selected.intValue, newFrom.intValue) }
         runCatching { wm.addView(v, params) }.onFailure { o.destroy(); return }
         view = v
         owner = o
+    }
+
+    /**
+     * Adds [outer] to the open wheel's outer ring (apps keep the inner two); the new slots fold out
+     * on their own. Returns false when nothing was added.
+     */
+    fun extendOuter(outer: List<GestureAction>): Boolean {
+        val g = geometry ?: return false
+        if (view == null || outer.isEmpty()) return false
+        val appSlots = GestureMode.RINGS[0] + GestureMode.RINGS[1]
+        val apps = baseActions.take(appSlots).let { it + List(appSlots - it.size) { GestureAction() } }
+        val before = slots.size
+        val all = layout(apps + outer.take(GestureMode.RINGS[2]), g[0], g[1], g[2], g[3], g[4], g[5], g[6])
+        if (all.size <= before) return false
+        newFrom.intValue = before
+        slots = all
+        return true
     }
 
     /** Highlights the slot under the finger. Returns true when the highlighted slot changed. */
@@ -133,6 +163,8 @@ object ActionWheel {
         owner = null
         slots = emptyList()
         selected.intValue = -1
+        newFrom.intValue = Int.MAX_VALUE
+        geometry = null
         return chosen
     }
 }
@@ -183,12 +215,20 @@ private fun shortLabel(context: Context, a: GestureAction): String = when (a.typ
 }
 
 @Composable
-private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: Int) {
+private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: Int, newFrom: Int = Int.MAX_VALUE) {
     ThumbTheme {
         val context = LocalContext.current
         val accent = Color(currentAccent(context, SettingsRepo.current))
         val open = remember { Animatable(0f) }
         LaunchedEffect(Unit) { open.animateTo(1f, tween(380)) }
+        // A later stage (favourites) folds out on its own.
+        val extra = remember { Animatable(0f) }
+        LaunchedEffect(newFrom) {
+            if (newFrom != Int.MAX_VALUE) {
+                extra.snapTo(0f)
+                extra.animateTo(1f, tween(420))
+            }
+        }
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = (open.value * 3f).coerceAtMost(1f) }) {
             Canvas(Modifier.fillMaxSize()) {
                 // Faint guide lines from the button to each slot.
@@ -201,7 +241,11 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
                 val on = i == selected
                 val sizeDp = 60.dp
                 // Fold out: each slot travels from the button to its place, a little after the one before.
-                val p = ((open.value * 1.6f) - i * 0.6f / slots.size.coerceAtLeast(1)).coerceIn(0f, 1f).let { 1f - (1f - it) * (1f - it) }
+                val p = if (i >= newFrom) {
+                    ((extra.value * 1.6f) - (i - newFrom) * 0.6f / (slots.size - newFrom).coerceAtLeast(1)).coerceIn(0f, 1f).let { 1f - (1f - it) * (1f - it) }
+                } else {
+                    ((open.value * 1.6f) - i * 0.6f / slots.size.coerceAtLeast(1)).coerceIn(0f, 1f).let { 1f - (1f - it) * (1f - it) }
+                }
                 Box(
                     Modifier
                         .offset {

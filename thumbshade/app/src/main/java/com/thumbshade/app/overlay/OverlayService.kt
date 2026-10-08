@@ -358,15 +358,10 @@ class OverlayService : Service() {
                 val size = buttonSize() ?: return
                 val st = SettingsRepo.current
                 val appsOnly = com.thumbshade.app.access.RecentApps.forSwitcher(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
-                val people = com.thumbshade.app.access.QuickContacts.forSwitcher(this@OverlayService)
-                // Apps take the inner and middle rings; favourite people always sit apart in the outer
-                // ring, so they don't read as "this person just wrote to you".
-                val apps = if (people.isEmpty()) appsOnly else {
-                    val rings = com.thumbshade.app.data.GestureMode.RINGS
-                    val appSlots = rings[0] + rings[1]
-                    val appRings = appsOnly.take(appSlots).let { it + List(appSlots - it.size) { com.thumbshade.app.data.GestureAction() } }
-                    appRings + people.take(rings[2])
-                }
+                // Favourite people come later: keep holding and they fold out in the outer ring.
+                val apps = appsOnly.take(com.thumbshade.app.data.GestureMode.RINGS[0] + com.thumbshade.app.data.GestureMode.RINGS[1])
+                switcherCenter = c
+                switcherHalf = size
                 if (apps.none { it.type != GestureType.NONE }) {
                     // Nothing to switch to: still let the icons fall out on release.
                     switcherOpen = true
@@ -383,6 +378,32 @@ class OverlayService : Service() {
                 if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.OPEN, st.switcherVibrationStrength)
                 else frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
+
+            private var switcherCenter: Pair<Int, Int>? = null
+            private var switcherHalf: Pair<Int, Int>? = null
+
+            override fun onSwitcherHoldLonger(): Boolean {
+                if (!switcherOpen) return false
+                val people = com.thumbshade.app.access.QuickContacts.forSwitcher(this@OverlayService)
+                if (people.isEmpty()) return false
+                val opened = if (ActionWheel.isOpen) ActionWheel.extendOuter(people) else {
+                    // No apps to show: open the wheel with just the favourites, in the outer ring.
+                    val c = switcherCenter ?: return false
+                    val sz = switcherHalf ?: return false
+                    val appSlots = com.thumbshade.app.data.GestureMode.RINGS[0] + com.thumbshade.app.data.GestureMode.RINGS[1]
+                    ActionWheel.show(this@OverlayService, List(appSlots) { com.thumbshade.app.data.GestureAction() } + people,
+                        c.first.toFloat(), c.second.toFloat(), sz.first / 2f, sz.second / 2f)
+                    ActionWheel.isOpen
+                }
+                if (opened) {
+                    val st = SettingsRepo.current
+                    if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.OPEN, st.switcherVibrationStrength)
+                    ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame, force = true)
+                }
+                return opened
+            }
+
+            override fun moveExtraMs() = SettingsRepo.current.moveExtraMs.toLong()
 
             /** True while the wheel on screen is the app switcher (not a gesture-mode wheel). */
             private var switcherOpen = false
@@ -777,6 +798,10 @@ class GestureFrame(context: Context) : FrameLayout(context) {
         /** Long press opens the app switcher instead of moving the button. */
         fun switcherEnabled(): Boolean = false
         fun onSwitcherStart() {}
+        /** Held still past the super long hold: show the favourites. True if they appeared. */
+        fun onSwitcherHoldLonger(): Boolean = false
+        /** After the favourites appear, how much longer to hold still before moving. */
+        fun moveExtraMs(): Long = 1500
         /** How the button is picked up to move. */
         fun moveGesture(): com.thumbshade.app.data.MoveGesture = com.thumbshade.app.data.MoveGesture.LONG_PRESS
         fun doubleTapHoldMoves(): Boolean = moveGesture() == com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD
@@ -822,8 +847,8 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             wheeling = true
             switcherAt = Pair(lastX, lastY)
             listener?.onSwitcherStart()
-            // Super long hold: keep holding still and the switcher gives way to moving the button.
-            if (gesture != com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD) postDelayed(switchToMove, superHold)
+            // Keep holding still: the favourites fold out; keep holding still longer and the button moves.
+            postDelayed(stageTwo, superHold)
         } else if (gesture == com.thumbshade.app.data.MoveGesture.SUPER_LONG_HOLD) {
             switcherAt = Pair(lastX, lastY)
             postDelayed(superMove, superHold)
@@ -834,6 +859,20 @@ class GestureFrame(context: Context) : FrameLayout(context) {
             listener?.onDragStart()
         }
     }
+    /** Super long hold on the switcher: favourites fold out, and (unless moving is double-tap) moving comes next. */
+    private val stageTwo = Runnable {
+        if (!wheeling) return@Runnable
+        val (x, y) = switcherAt ?: return@Runnable
+        if (abs(lastX - x) > slop || abs(lastY - y) > slop) return@Runnable
+        val movesByHold = listener?.moveGesture() != com.thumbshade.app.data.MoveGesture.DOUBLE_TAP_HOLD
+        if (listener?.onSwitcherHoldLonger() == true) {
+            switcherAt = Pair(lastX, lastY)
+            if (movesByHold) postDelayed(switchToMove, listener?.moveExtraMs() ?: MOVE_AFTER_MS)
+        } else if (movesByHold) {
+            switchToMove.run()
+        }
+    }
+
     /** Holding still on the switcher a while longer means "move the button" instead. */
     private val switchToMove = Runnable {
         if (!wheeling) return@Runnable
@@ -923,6 +962,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 removeCallbacks(switchToMove)
                 removeCallbacks(holdToMove)
                 removeCallbacks(superMove)
+                removeCallbacks(stageTwo)
                 val dx = event.rawX - downX
                 val dy = event.rawY - downY
                 when {
@@ -967,6 +1007,7 @@ class GestureFrame(context: Context) : FrameLayout(context) {
                 removeCallbacks(switchToMove)
                 removeCallbacks(holdToMove)
                 removeCallbacks(superMove)
+                removeCallbacks(stageTwo)
                 secondTap = false
                 if (dragging) listener?.onDragEnd(0f)
                 if (wheeling) listener?.onWheelEnd(false)

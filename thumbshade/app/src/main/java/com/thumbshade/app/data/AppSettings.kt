@@ -384,6 +384,8 @@ data class AppSettings(
     val moveGesture: MoveGesture = MoveGesture.SUPER_LONG_HOLD,
     /** Super long hold: how much longer than a long press to keep holding. */
     val moveHoldMs: Int = 1500,
+    /** After the favourites fold out, how much longer to hold still before the button moves. */
+    val moveExtraMs: Int = 1500,
     val switcherFavorites: Set<String> = emptySet(),
     /** Vibrate when the switcher opens, on each app you slide over, and when you pick one. */
     val switcherVibration: Boolean = true,
