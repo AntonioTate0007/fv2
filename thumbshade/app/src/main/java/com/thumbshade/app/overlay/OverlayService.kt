@@ -344,8 +344,11 @@ class OverlayService : Service() {
 
             override fun moveHoldMs() = SettingsRepo.current.moveHoldMs.toLong()
 
+            private var moveArmedAt = 0L
+
             override fun onMoveArmed() {
-                Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, SettingsRepo.current.switcherVibrationStrength.coerceAtLeast(0.6f))
+                moveArmedAt = android.os.SystemClock.uptimeMillis()
+                Haptics.play(this@OverlayService, Haptics.Kind.STAGE_MOVE, SettingsRepo.current.switcherVibrationStrength.coerceAtLeast(0.6f))
             }
 
             override fun onDoubleTap() {
@@ -375,7 +378,7 @@ class OverlayService : Service() {
                 ScrollSounds.prepare(this@OverlayService, st.switcherSound)
                 ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame)
                 switcherOpen = true
-                if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.OPEN, st.switcherVibrationStrength)
+                if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.STAGE_APPS, st.switcherVibrationStrength)
                 else frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
 
@@ -397,7 +400,7 @@ class OverlayService : Service() {
                 }
                 if (opened) {
                     val st = SettingsRepo.current
-                    if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.OPEN, st.switcherVibrationStrength)
+                    if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.STAGE_FAVOURITES, st.switcherVibrationStrength)
                     ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame, force = true)
                 }
                 return opened
@@ -423,7 +426,7 @@ class OverlayService : Service() {
                 if (a.type != GestureType.OPEN_APP && a.type != GestureType.OPEN_APP_NOTIFICATION) return@Runnable
                 ActionWheel.armSelected()
                 val st = SettingsRepo.current
-                Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, st.switcherVibrationStrength.coerceAtLeast(0.5f))
+                Haptics.play(this@OverlayService, Haptics.Kind.SPLIT_READY, st.switcherVibrationStrength.coerceAtLeast(0.5f))
                 ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame, force = true)
             }
 
@@ -483,7 +486,8 @@ class OverlayService : Service() {
                 startX = params.x
                 startY = params.y
                 updateButtonLayout()
-                frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                // The move pattern just played: don't blur it with a second buzz.
+                if (android.os.SystemClock.uptimeMillis() - moveArmedAt > 500) frame.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
 
             override fun onDrag(dx: Float, dy: Float) {

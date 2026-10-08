@@ -13,8 +13,8 @@ android {
         applicationId = "com.thumbshade.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 29
-        versionName = "3.8"
+        versionCode = 30
+        versionName = "3.9"
     }
 
     buildTypes {
