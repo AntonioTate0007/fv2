@@ -359,12 +359,13 @@ class OverlayService : Service() {
                 val st = SettingsRepo.current
                 val appsOnly = com.thumbshade.app.access.RecentApps.forSwitcher(this@OverlayService, st.switcherCount.coerceIn(1, com.thumbshade.app.data.GestureMode.SLOT_COUNT))
                 val people = com.thumbshade.app.access.QuickContacts.forSwitcher(this@OverlayService)
-                // Apps take the inner ring, favourite people the middle ring, any further apps the outer one.
+                // Apps take the inner and middle rings; favourite people always sit apart in the outer
+                // ring, so they don't read as "this person just wrote to you".
                 val apps = if (people.isEmpty()) appsOnly else {
                     val rings = com.thumbshade.app.data.GestureMode.RINGS
-                    val inner = appsOnly.take(rings[0]).let { it + List(rings[0] - it.size) { com.thumbshade.app.data.GestureAction() } }
-                    val middle = people.take(rings[1]).let { it + List(rings[1] - it.size) { com.thumbshade.app.data.GestureAction() } }
-                    inner + middle + appsOnly.drop(rings[0])
+                    val appSlots = rings[0] + rings[1]
+                    val appRings = appsOnly.take(appSlots).let { it + List(appSlots - it.size) { com.thumbshade.app.data.GestureAction() } }
+                    appRings + people.take(rings[2])
                 }
                 if (apps.none { it.type != GestureType.NONE }) {
                     // Nothing to switch to: still let the icons fall out on release.

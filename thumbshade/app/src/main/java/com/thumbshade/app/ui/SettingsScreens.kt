@@ -892,7 +892,7 @@ private fun QuickTextSettings(s: AppSettings) {
     Text("Quick text to favourites", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
     SwitchRow(
         "Favourite people fold out too", s.quickTextEnabled,
-        "Their photos fan out in the middle ring. Slide onto someone and lift to start a text to them.",
+        "They sit apart in the outer ring with a pencil badge. Slide onto someone and lift to start a text to them.",
     ) { v -> edit { it.copy(quickTextEnabled = v) } }
     if (!s.quickTextEnabled) return
     SwitchRow("Include starred contacts", s.quickTextStarred, "The people you starred in your Contacts app") { v -> edit { it.copy(quickTextStarred = v) } }
