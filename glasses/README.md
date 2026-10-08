@@ -64,6 +64,23 @@ Say "Jarvis" or tap again while he's talking to interrupt. Say "stop", "never mi
 
 Put the glasses on and say **"Jarvis… what am I looking at?"**
 
+## First Test (10 minutes, no glasses needed)
+
+Before going outside, test Jarvis works end-to-end **on the phone only**:
+
+1. **Open the Jarvis app** (you don't need the glasses yet).
+2. Scroll to **Testing** and tap **"API Check"**.
+   - ✅ **"API check passed!"** means your xAI key and model work.
+   - ❌ If it says **"key rejected"**, check your xAI key at <https://console.x.ai>.
+   - ❌ If it says **"model not found"**, the model id is wrong — try `grok-4.7` (vision-capable).
+3. Tap **"Test Grok (voice-only)"**. Jarvis should answer in a few seconds.
+   - If TTS fails, it falls back to the phone's voice — still a pass.
+4. **Start Jarvis** (top button) and tap **"Talk now"**. Say a question. Jarvis should hear you and answer out loud.
+
+Once voice-only works, the full glasses flow (camera + wake word + touchpad) is the same pipeline plus hardware.
+
+## First Device Test (with glasses)
+
 ## Settings
 
 | Setting | Default | Notes |
@@ -113,13 +130,26 @@ used by pasting their voice ID into a voice setting.
 
 ## Troubleshooting
 
+**Before your first real test**, use the in-app **Testing** section:
+- **API Check**: verifies your xAI key and model. If it fails, check your key at <https://console.x.ai> and that the model is `grok-4.7` or another vision-capable model.
+- **Test Grok (voice-only)**: asks Grok a question without glasses. If this works, the full flow should too.
+
+**Common issues:**
 - **"Glasses: not linked"**: make sure Developer Mode is on in Meta AI, then tap *Link glasses* again.
-- **No photo / Jarvis says he can't see**: tap *Allow glasses camera*. The glasses must be worn
-  (not in the case) and not hot.
-- **Wake word doesn't trigger**: check the Picovoice key, and that the phone isn't in
-  battery-saver mode that kills background apps (set Jarvis to *Unrestricted* battery use).
+- **No photo / Jarvis says he can't see**: tap *Allow glasses camera*. The glasses must be worn (not in the case) and not hot. Check `adb logcat -s GlassesLink` for "Camera stream didn't reach STREAMING" (thermal limit).
+- **xAI error 404 / "model not found"**: the model id in settings is wrong or doesn't support images. Try `grok-4.7`.
+- **xAI error 401 / "key rejected"**: the API key is invalid. Get a new one at <https://console.x.ai>.
+- **xAI error 429 / "rate limit"**: you've hit your usage cap or rate limit. Check your balance at console.x.ai.
+- **Wake word doesn't trigger**: check the Picovoice key, and that the phone isn't in battery-saver mode that kills background apps (set Jarvis to *Unrestricted* battery use).
 - **Sound comes out of the phone**: the glasses must be connected as a Bluetooth audio device.
 - **Touchpad tap pauses music instead**: by design. If music is playing, the tap goes to the music app.
+- **Service won't start / crashes immediately**: Android 14+ needs BLUETOOTH_CONNECT and RECORD_AUDIO granted *before* starting the service. Grant them in the app first.
+
+**Logs for debugging** (USB debugging on, phone plugged in):
+```bash
+adb logcat -s Jarvis GlassesLink GrokClient WakeWord Speaker Listener
+```
+
 
 ## Code map
 

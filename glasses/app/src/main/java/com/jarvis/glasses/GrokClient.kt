@@ -81,15 +81,17 @@ class GrokClient(private val settings: Settings) {
     private fun askWithSearch(system: String, question: String, frames: List<ByteArray>): String {
         val input = JSONArray().put(JSONObject().put("role", "system").put("content", system))
         history.forEach { (role, text) -> input.put(JSONObject().put("role", role).put("content", text)) }
-        val content = JSONArray()
+        
+        // Build user message with image(s) and text
+        val userContent = JSONArray()
         frames.forEach { jpeg ->
-            content.put(JSONObject()
+            userContent.put(JSONObject()
                 .put("type", "input_image")
                 .put("image_url", dataUrl(jpeg))
                 .put("detail", "high"))
         }
-        content.put(JSONObject().put("type", "input_text").put("text", question))
-        input.put(JSONObject().put("role", "user").put("content", content))
+        userContent.put(JSONObject().put("type", "input_text").put("text", question))
+        input.put(JSONObject().put("role", "user").put("content", userContent))
 
         val body = JSONObject()
             .put("model", settings.model)
@@ -100,8 +102,11 @@ class GrokClient(private val settings: Settings) {
             .put("max_output_tokens", 600)
 
         val json = postJson("responses", body)
+        
+        // Try output_text first (newer format)
         json.optString("output_text").takeIf { it.isNotBlank() }?.let { return it }
-        // Raw REST shape: output[] -> {type: "message", content: [{type: "output_text", text}]}
+        
+        // Fall back to output array format
         val out = StringBuilder()
         val items = json.optJSONArray("output") ?: JSONArray()
         for (i in 0 until items.length()) {
@@ -110,9 +115,17 @@ class GrokClient(private val settings: Settings) {
             val parts = item.optJSONArray("content") ?: continue
             for (j in 0 until parts.length()) {
                 val part = parts.optJSONObject(j) ?: continue
-                if (part.optString("type") == "output_text") out.append(part.optString("text"))
+                if (part.optString("type") == "output_text") {
+                    out.append(part.optString("text"))
+                }
             }
         }
+        
+        // If still empty, check for a simple "text" field
+        if (out.isEmpty()) {
+            json.optString("text").takeIf { it.isNotBlank() }?.let { return it }
+        }
+        
         return out.toString()
     }
 
@@ -164,9 +177,10 @@ class GrokClient(private val settings: Settings) {
             o.optJSONObject("error")?.optString("message") ?: o.optString("error").ifEmpty { o.optString("message") }
         }.getOrNull()?.takeIf { it.isNotBlank() } ?: body.take(200)
         return when (code) {
-            401, 403 -> "xAI rejected the API key. $detail"
-            404 -> "Model '${settings.model}' wasn't found. Pick another model in settings. $detail"
-            429 -> "xAI rate limit or credits exhausted. $detail"
+            401, 403 -> "xAI rejected the API key. Check your key at console.x.ai. $detail"
+            404 -> "Model '${settings.model}' not found. Choose a vision-capable model like grok-4.7 or grok-4 in settings. $detail"
+            429 -> "xAI rate limit or credits exhausted. Check your balance at console.x.ai. $detail"
+            500, 502, 503, 504 -> "xAI server error (code $code). Try again in a moment. $detail"
             else -> "xAI error $code. $detail"
         }
     }

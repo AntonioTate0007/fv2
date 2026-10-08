@@ -102,10 +102,14 @@ class GlassesLink(private val scope: CoroutineScope) {
      *   order so Grok can follow what happens — the closest thing to live video the
      *   xAI API accepts.
      *
-     * Returns an empty list if the camera isn't available.
+     * Returns an empty list if the camera isn't available (not worn, overheated, or
+     * stream didn't reach STREAMING within the timeout).
      */
     suspend fun captureFrames(video: Boolean, keepShooting: () -> Boolean): List<ByteArray> {
-        val s = ensureSession() ?: return emptyList()
+        val s = ensureSession() ?: run {
+            Log.w(TAG, "captureFrames: no session")
+            return emptyList()
+        }
         val camera = s.addCamera(StreamConfiguration(videoQuality = VideoQuality.HIGH, frameRate = 15))
             .onFailure { error, _ -> Log.w(TAG, "addCamera failed: ${error.description}") }
             .getOrNull() ?: return emptyList()
@@ -117,7 +121,10 @@ class GlassesLink(private val scope: CoroutineScope) {
             val streaming = withTimeoutOrNull(STREAM_TIMEOUT_MS) {
                 stream.state.first { it == StreamState.STREAMING || it == StreamState.STOPPED || it == StreamState.CLOSED }
             }
-            if (streaming != StreamState.STREAMING) return emptyList()
+            if (streaming != StreamState.STREAMING) {
+                Log.w(TAG, "Camera stream didn't reach STREAMING (state=$streaming after ${STREAM_TIMEOUT_MS}ms). Glasses may be overheated or not worn.")
+                return emptyList()
+            }
 
             val maxShots = if (video) VIDEO_FRAMES else PHOTO_SHOTS
             val minShots = if (video) 2 else 1
@@ -131,6 +138,12 @@ class GlassesLink(private val scope: CoroutineScope) {
                     ?.let(shotsTaken::add)
                 attempts++
             } while (attempts < maxShots && (keepShooting() || attempts < minShots))
+
+            if (shotsTaken.isEmpty()) {
+                Log.w(TAG, "captureFrames: no photos captured after $attempts attempts")
+            } else {
+                Log.i(TAG, "captureFrames: captured ${shotsTaken.size} photos in $attempts attempts (video=$video)")
+            }
 
             if (video) return shotsTaken.map { toJpeg(it, VIDEO_EDGE) }
             return listOfNotNull(shotsTaken.maxByOrNull(::sharpness)?.let { toJpeg(it, PHOTO_EDGE) })

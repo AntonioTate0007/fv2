@@ -81,8 +81,9 @@ class JarvisService : Service() {
             )
         }
         if (started.isFailure) {
-            // Android only lets a mic service start while the app is on screen.
-            Log.w(TAG, "Couldn't start in the foreground; open the app to start Jarvis", started.exceptionOrNull())
+            // Android 14+ requires BLUETOOTH_CONNECT and RECORD_AUDIO before starting a foreground service
+            // with these types. The user must grant them in the app first.
+            Log.w(TAG, "Couldn't start in the foreground (missing permissions?); open the app to grant them and start Jarvis", started.exceptionOrNull())
             stopSelf()
             return
         }
@@ -143,6 +144,7 @@ class JarvisService : Service() {
         wake.pause()
         try {
             if (settings.xaiKey.isBlank()) {
+                log("Error: xAI API key missing")
                 say("I'm afraid I need an xAI API key before I can think, ${settings.honorific}. Please add one in the app.", persona, useGrokVoice = false)
                 return
             }
@@ -159,10 +161,15 @@ class JarvisService : Service() {
                     grok.ask(question, heard.second, persona)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "Grok failed", e)
+                } catch (e: GrokException) {
+                    Log.w(TAG, "Grok API error: ${e.message}", e)
                     log("Error: ${e.message}")
-                    say("Apologies, ${settings.honorific}, I couldn't reach Grok. ${e.message ?: ""}".take(220), persona, useGrokVoice = false)
+                    say("Apologies, ${settings.honorific}. ${e.message}".take(220), persona, useGrokVoice = false)
+                    break
+                } catch (e: Exception) {
+                    Log.w(TAG, "Unexpected error", e)
+                    log("Error: ${e.message}")
+                    say("Apologies, ${settings.honorific}, something went wrong. ${e.message ?: ""}".take(220), persona, useGrokVoice = false)
                     break
                 }
                 log("${persona.displayName}: $answer")
@@ -179,7 +186,14 @@ class JarvisService : Service() {
         val stillTalking = AtomicBoolean(true)
         val video = settings.videoMode
         val capture: Deferred<List<ByteArray>>? = if (settings.useCamera && glasses.isRegistered) {
-            async { runCatching { glasses.captureFrames(video) { stillTalking.get() } }.getOrDefault(emptyList()) }
+            async { 
+                runCatching { 
+                    glasses.captureFrames(video) { stillTalking.get() }
+                }.onFailure {
+                    Log.w(TAG, "Camera capture failed", it)
+                    log("Camera unavailable (may be overheated or not worn)")
+                }.getOrDefault(emptyList())
+            }
         } else null
 
         val text = listener.listen()
@@ -190,6 +204,9 @@ class JarvisService : Service() {
         }
         val frames = capture?.let { withTimeoutOrNull(PHOTO_WAIT_MS) { it.await() } }.orEmpty()
         capture?.cancel()
+        if (settings.useCamera && frames.isEmpty() && glasses.isRegistered) {
+            Log.i(TAG, "Question heard but no photo captured; continuing voice-only")
+        }
         text to frames
     }
 

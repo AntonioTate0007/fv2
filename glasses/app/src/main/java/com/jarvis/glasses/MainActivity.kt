@@ -228,6 +228,53 @@ class MainActivity : ComponentActivity() {
             toast("Saved")
         })
 
+        col.addView(header("Testing"))
+        col.addView(text(
+            "Test Grok without glasses: ask a question, get an answer. Check your setup before going outside.",
+            13f, "#8FB3C4",
+        ))
+        col.addView(button("Test Grok (voice-only)") {
+            if (settings.xaiKey.isBlank()) {
+                toast("Add your xAI API key first")
+                return@button
+            }
+            lifecycleScope.launch {
+                try {
+                    log("Testing: Hello Grok, are you there?")
+                    val client = GrokClient(settings)
+                    val answer = client.ask("Hello, are you there? Just say yes.", emptyList(), settings.persona)
+                    log("Test passed: $answer")
+                    toast("Test passed! Grok answered: ${answer.take(80)}")
+                } catch (e: Exception) {
+                    log("Test failed: ${e.message}")
+                    toast("Test failed: ${e.message}")
+                }
+            }
+        })
+        col.addView(button("API Check") {
+            if (settings.xaiKey.isBlank()) {
+                toast("Add your xAI API key first")
+                return@button
+            }
+            lifecycleScope.launch {
+                try {
+                    log("Checking xAI API key and model...")
+                    val client = GrokClient(settings)
+                    // Quick test: just verify the key works
+                    val answer = client.ask("Say 'OK' only", emptyList(), settings.persona)
+                    log("API check passed: key works, model=${settings.model}")
+                    toast("API check passed! Model ${settings.model} is reachable.")
+                } catch (e: GrokException) {
+                    log("API check failed: ${e.message}")
+                    toast("API check failed: ${e.message}")
+                } catch (e: Exception) {
+                    log("API check error: ${e.message}")
+                    toast("Error: ${e.message}")
+                }
+            }
+        })
+
+
         col.addView(header("Conversation"))
         transcriptView = text("", 15f, "#E6F7FF")
         col.addView(transcriptView)
