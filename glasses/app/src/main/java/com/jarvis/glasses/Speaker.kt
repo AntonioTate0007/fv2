@@ -18,7 +18,7 @@ import java.util.Locale
  * Plays Jarvis's voice. Audio goes out as normal media, so with the glasses
  * connected over Bluetooth it comes out of the glasses' open-ear speakers.
  */
-class Speaker(private val context: Context) {
+class Speaker(private val context: Context, private val settings: Settings) {
 
     private val audio = context.getSystemService(AudioManager::class.java)!!
     private val attrs = AudioAttributes.Builder()
@@ -83,6 +83,9 @@ class Speaker(private val context: Context) {
             done = finished
             audio.requestAudioFocus(focus)
             engine.setAudioAttributes(attrs)
+            // Ultron: slower and much deeper than JARVIS.
+            engine.setPitch(if (settings.isUltron) 0.6f else 0.9f)
+            engine.setSpeechRate(if (settings.isUltron) 0.9f else 1.05f)
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
                 override fun onDone(utteranceId: String?) { finished.complete(Unit) }
@@ -131,8 +134,6 @@ class Speaker(private val context: Context) {
         val male = voices.firstOrNull { "male" in it.name.lowercase() && "female" !in it.name.lowercase() }
             ?: voices.firstOrNull { it.name.contains("-rjs-") || it.name.contains("-gbd-") } // Google's UK male voices
         (male ?: voices.firstOrNull())?.let { engine.voice = it }
-        engine.setSpeechRate(1.05f)
-        engine.setPitch(0.9f)
     }
 
     private companion object {

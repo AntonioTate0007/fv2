@@ -171,9 +171,10 @@ class MainActivity : ComponentActivity() {
 
         col.addView(header("Personality"))
         val model = field("Grok model", settings.model)
-        val voice = field("Grok voice: leo, rex, sal, ara, eve", settings.voice)
+        val voice = field("Grok voice: leo, rex, sal, ara, eve (blank = persona default)", settings.voice)
         val honorific = field("Jarvis calls you", settings.honorific)
-        listOf(model, voice, honorific).forEach { col.addView(it.first); col.addView(it.second) }
+        val persona = field("Personality: jarvis or ultron", settings.persona)
+        listOf(persona, model, voice, honorific).forEach { col.addView(it.first); col.addView(it.second) }
 
         val grokVoice = switch("Speak with Grok's voice (off = phone's British voice)", settings.grokVoice)
         val followUps = switch("Keep listening for follow-up questions", settings.followUps)
@@ -184,8 +185,12 @@ class MainActivity : ComponentActivity() {
             settings.xaiKey = xai.second.text.toString()
             settings.picovoiceKey = pico.second.text.toString()
             settings.model = model.second.text.toString()
-            settings.voice = voice.second.text.toString()
+            // An untouched default voice follows the personality (leo for Jarvis, rex for Ultron).
+            val oldDefault = if (settings.isUltron) Settings.ULTRON_VOICE else Settings.DEFAULT_VOICE
+            val pickedVoice = voice.second.text.toString().trim().lowercase()
+            settings.voice = if (pickedVoice == oldDefault) "" else pickedVoice
             settings.honorific = honorific.second.text.toString()
+            settings.persona = persona.second.text.toString()
             settings.grokVoice = grokVoice.isChecked
             settings.followUps = followUps.isChecked
             settings.useCamera = camera.isChecked

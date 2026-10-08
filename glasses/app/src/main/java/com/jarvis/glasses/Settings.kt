@@ -21,8 +21,17 @@ class Settings(context: Context) {
 
     /** Grok TTS voice: leo (authoritative), rex (confident), sal (balanced), ara (warm), eve (upbeat). */
     var voice: String
-        get() = prefs.getString(KEY_VOICE, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_VOICE
+        get() = prefs.getString(KEY_VOICE, null)?.takeIf { it.isNotBlank() }
+            ?: if (isUltron) ULTRON_VOICE else DEFAULT_VOICE
         set(v) = prefs.edit().putString(KEY_VOICE, v.trim().lowercase()).apply()
+
+    /** "jarvis" (polite butler) or "ultron" (cold, menacing — but still helpful). */
+    var persona: String
+        get() = prefs.getString(KEY_PERSONA, null)?.takeIf { it.isNotBlank() } ?: "jarvis"
+        set(v) = prefs.edit().putString(KEY_PERSONA, if (v.trim().lowercase() == "ultron") "ultron" else "jarvis").apply()
+
+    val isUltron: Boolean
+        get() = persona == "ultron"
 
     /** What Jarvis calls you. */
     var honorific: String
@@ -47,12 +56,14 @@ class Settings(context: Context) {
     companion object {
         const val DEFAULT_MODEL = "grok-4.7"
         const val DEFAULT_VOICE = "leo"
+        const val ULTRON_VOICE = "rex"
 
         private const val KEY_XAI = "xai_key"
         private const val KEY_PICO = "picovoice_key"
         private const val KEY_MODEL = "model"
         private const val KEY_VOICE = "voice"
         private const val KEY_HONORIFIC = "honorific"
+        private const val KEY_PERSONA = "persona"
         private const val KEY_GROK_VOICE = "grok_voice"
         private const val KEY_FOLLOW_UPS = "follow_ups"
         private const val KEY_CAMERA = "camera"

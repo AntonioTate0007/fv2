@@ -67,7 +67,7 @@ class JarvisService : Service() {
         super.onCreate()
         settings = Settings(this)
         grok = GrokClient(settings)
-        speaker = Speaker(this)
+        speaker = Speaker(this, settings)
         listener = Listener(this)
         glasses = GlassesLink(scope)
         wake = WakeWord(this) { summon() }
@@ -286,7 +286,7 @@ class JarvisService : Service() {
     }
 
     private fun String.cleanQuestion(): String =
-        trim().replace(Regex("^(hey |ok |okay )?jarvis[,.!]?\\s*", RegexOption.IGNORE_CASE), "").trim()
+        trim().replace(Regex("^(hey |ok |okay )?(jarvis|ultron)[,.!]?\\s*", RegexOption.IGNORE_CASE), "").trim()
 
     private fun String.isDismissal(): Boolean =
         lowercase().trim(' ', '.', '!').let { it in DISMISSALS }

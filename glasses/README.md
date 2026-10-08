@@ -66,11 +66,20 @@ Put the glasses on and say **"Jarvis… what am I looking at?"**
 | Setting | Default | Notes |
 |---|---|---|
 | Grok model | `grok-4.7` | Any **vision-capable** model id from <https://docs.x.ai/developers/models>. A 404 error means the id is wrong. |
-| Grok voice | `leo` | `leo` (authoritative), `rex` (confident), `sal`, `ara`, `eve` |
+| Personality | `jarvis` | `ultron` = cold, theatrical, menacing wit (still helpful), deeper `rex` voice |
+| Grok voice | `leo` (Jarvis) / `rex` (Ultron) | `leo` (authoritative), `rex` (confident), `sal`, `ara`, `eve` |
 | Jarvis calls you | `sir` | "ma'am", "boss", your name… |
 | Speak with Grok's voice | on | Off = the phone's free offline British TTS voice (also used automatically if xAI TTS fails) |
 | Keep listening for follow-ups | on | After answering, listens again without the wake word until you go quiet |
 | Send what the glasses see | on | Off = voice-only Grok, no camera |
+
+### About voices
+
+The voices are xAI's stock voices plus a pitched-down phone voice. The app doesn't clone
+any actor's voice (for example James Spader's Ultron, or Paul Bettany's JARVIS). Copying a
+real person's voice without their permission raises consent and publicity-rights problems.
+The wake word stays "Jarvis" (Porcupine's built-in keyword). A custom "Ultron" wake word
+can be trained for free in the Picovoice console, but the app would need a small change to load it.
 
 ## Privacy
 
