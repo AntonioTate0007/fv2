@@ -1,0 +1,47 @@
+name: Jarvis APK
+
+on:
+  push:
+    paths: ["glasses/**", ".github/workflows/jarvis-apk.yml"]
+  pull_request:
+    paths: ["glasses/**", ".github/workflows/jarvis-apk.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: glasses
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      
+      # Create a stable debug keystore so APKs can upgrade over each other
+      - name: Create debug keystore
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkey -v -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+      
+      - name: Build debug APK
+        run: ./gradlew --no-daemon assembleDebug
+      
+      - name: Verify APK was built
+        run: |
+          ls -lh app/build/outputs/apk/debug/*.apk
+          echo "APK size: $(du -h app/build/outputs/apk/debug/*.apk | cut -f1)"
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-debug-apk
+          path: glasses/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
