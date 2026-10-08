@@ -417,9 +417,25 @@ class OverlayService : Service() {
                 if (st.wheelHaptic) frame.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             }
 
+            /** Keeping the finger on an app arms it for split screen / pop-up. */
+            private val armSplit = Runnable {
+                val a = ActionWheel.selectedAction() ?: return@Runnable
+                if (a.type != GestureType.OPEN_APP && a.type != GestureType.OPEN_APP_NOTIFICATION) return@Runnable
+                ActionWheel.armSelected()
+                val st = SettingsRepo.current
+                Haptics.play(this@OverlayService, Haptics.Kind.CONFIRM, st.switcherVibrationStrength.coerceAtLeast(0.5f))
+                ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame, force = true)
+            }
+
             override fun onWheelMove(rawX: Float, rawY: Float) {
                 if (ActionWheel.move(rawX, rawY)) {
                     val st = SettingsRepo.current
+                    main.removeCallbacks(armSplit)
+                    val a = ActionWheel.selectedAction()
+                    if (switcherOpen && st.multiWindowHold && a != null &&
+                        (a.type == GestureType.OPEN_APP || a.type == GestureType.OPEN_APP_NOTIFICATION) &&
+                        MultiWindow.available(this@OverlayService)
+                    ) main.postDelayed(armSplit, st.multiWindowHoldMs.toLong())
                     if (switcherOpen) {
                         if (st.switcherVibration) Haptics.play(this@OverlayService, Haptics.Kind.TICK, st.switcherVibrationStrength)
                         ScrollSounds.play(this@OverlayService, st.switcherSound, st.switcherSoundVolume, st.scrollSoundRespectSilent, frame)
@@ -431,6 +447,8 @@ class OverlayService : Service() {
             }
 
             override fun onWheelEnd(run: Boolean) {
+                main.removeCallbacks(armSplit)
+                val split = ActionWheel.isArmed()
                 val action = ActionWheel.end()
                 val st = SettingsRepo.current
                 if (run && action != null && switcherOpen) {
@@ -443,7 +461,8 @@ class OverlayService : Service() {
                 if (run && wasSwitcher && action != null && action.arg.isNotBlank() &&
                     (action.type == GestureType.OPEN_APP || action.type == GestureType.OPEN_APP_NOTIFICATION)
                 ) com.thumbshade.app.ai.AppPredictor.onPicked(this@OverlayService, action.arg)
-                if (run && action != null) GestureRunner.run(this@OverlayService, action)
+                if (run && action != null && split && action.arg.isNotBlank()) MultiWindow.open(this@OverlayService, action.arg)
+                else if (run && action != null) GestureRunner.run(this@OverlayService, action)
                 else if (run && wasSwitcher && st.releaseShowsIcons) iconsDrop++
             }
 

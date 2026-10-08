@@ -7,6 +7,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.VerticalSplit
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.asImageBitmap
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.thumbshade.app.data.GestureAction
 import com.thumbshade.app.data.GestureMode
 import com.thumbshade.app.data.GestureType
@@ -67,6 +69,13 @@ object ActionWheel {
     private val selected = mutableIntStateOf(-1)
     /** Slots from this index on were added later (they fold out on their own). */
     private val newFrom = mutableIntStateOf(Int.MAX_VALUE)
+    /** The slot held long enough to open in a split/pop-up window (-1 = none). */
+    private val armed = mutableIntStateOf(-1)
+
+    fun selectedAction(): GestureAction? = slots.getOrNull(selected.intValue)?.action
+    fun armSelected() { armed.intValue = selected.intValue }
+    /** True when the slot that will be picked was held for split screen. */
+    fun isArmed(): Boolean = armed.intValue >= 0 && armed.intValue == selected.intValue
     private var hitRadius = 0f
     private var baseActions: List<GestureAction> = emptyList()
     private var geometry: FloatArray? = null
@@ -122,7 +131,7 @@ object ActionWheel {
             noLimits = true,
         )
         val o = OverlayOwner()
-        val v = OverlayWindows.composeView(context, o) { WheelView(slotState.value, Offset(cx, cy), selected.intValue, newFrom.intValue) }
+        val v = OverlayWindows.composeView(context, o) { WheelView(slotState.value, Offset(cx, cy), selected.intValue, newFrom.intValue, armed.intValue) }
         runCatching { wm.addView(v, params) }.onFailure { o.destroy(); return }
         view = v
         owner = o
@@ -151,6 +160,7 @@ object ActionWheel {
             ?.takeIf { hypot(slots[it].x - x, slots[it].y - y) <= hitRadius } ?: -1
         if (i == selected.intValue) return false
         selected.intValue = i
+        armed.intValue = -1
         return i >= 0
     }
 
@@ -164,6 +174,7 @@ object ActionWheel {
         slots = emptyList()
         selected.intValue = -1
         newFrom.intValue = Int.MAX_VALUE
+        armed.intValue = -1
         geometry = null
         return chosen
     }
@@ -215,7 +226,7 @@ private fun shortLabel(context: Context, a: GestureAction): String = when (a.typ
 }
 
 @Composable
-private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: Int, newFrom: Int = Int.MAX_VALUE) {
+private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: Int, newFrom: Int = Int.MAX_VALUE, armed: Int = -1) {
     ThumbTheme {
         val context = LocalContext.current
         val accent = Color(currentAccent(context, SettingsRepo.current))
@@ -236,6 +247,22 @@ private fun WheelView(slots: List<ActionWheel.Slot>, center: Offset, selected: I
                     drawLine(accent.copy(alpha = if (i == selected) 0.7f else 0.15f), center, Offset(sl.x, sl.y), if (i == selected) 4f else 2f)
                 }
                 drawCircle(accent.copy(alpha = 0.25f), radius = 14f, center = center, style = Stroke(3f))
+            }
+            // Held for split screen: a badge over the slot.
+            slots.getOrNull(armed)?.let { sl ->
+                Box(
+                    Modifier
+                        .offset { IntOffset((sl.x + 14.dp.toPx()).toInt(), (sl.y - 40.dp.toPx()).toInt()) }
+                        .size(26.dp)
+                        .background(accent, CircleShape)
+                        .zIndex(2f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Filled.VerticalSplit, "Split screen",
+                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp),
+                    )
+                }
             }
             slots.forEachIndexed { i, sl ->
                 val on = i == selected

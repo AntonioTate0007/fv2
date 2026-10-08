@@ -195,6 +195,9 @@ data class QuickContact(val name: String, val number: String, val photo: String?
 enum class GlowColor(val label: String) { RED("Red"), APP("The app's own colour"), THEME("Theme colour"), CUSTOM("Custom") }
 
 @Serializable
+enum class MultiWindowMode(val label: String) { SPLIT("Split screen"), POP_UP("Pop-up window (where the phone supports it)") }
+
+@Serializable
 enum class LongPressAction(val label: String) {
     APP_SWITCHER("Open the app switcher"),
     MOVE("Move the button"),
@@ -386,6 +389,10 @@ data class AppSettings(
     val moveHoldMs: Int = 1500,
     /** After the favourites fold out, how much longer to hold still before the button moves. */
     val moveExtraMs: Int = 1500,
+    /** In the switcher, keep the finger on an app to open it in split screen or a pop-up. */
+    val multiWindowHold: Boolean = true,
+    val multiWindowHoldMs: Int = 700,
+    val multiWindowMode: MultiWindowMode = MultiWindowMode.SPLIT,
     val switcherFavorites: Set<String> = emptySet(),
     /** Vibrate when the switcher opens, on each app you slide over, and when you pick one. */
     val switcherVibration: Boolean = true,

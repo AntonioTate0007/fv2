@@ -372,6 +372,7 @@ fun ButtonScreen() {
                     com.thumbshade.app.overlay.ScrollSounds.play(tickCtx, s.switcherSound, v, false, sv)
                 }
             }
+            MultiWindowSettings(s)
             QuickTextSettings(s)
             SwitchRow("Icons fall out when I let go", s.releaseShowsIcons, "Release the long press without picking an app and the notification icons drop out of the button") { v -> edit { it.copy(releaseShowsIcons = v) } }
             SwitchRow("Vibrate", s.switcherVibration, "A buzz when it opens, a tick on each app you slide over, a click when you pick one") { v -> edit { it.copy(switcherVibration = v) } }
@@ -915,4 +916,18 @@ private fun QuickTextSettings(s: AppSettings) {
             picker.launch(android.content.Intent(android.content.Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI))
         }
     }, modifier = Modifier.fillMaxWidth()) { Text("Add a person") }
+}
+
+@Composable
+private fun MultiWindowSettings(s: AppSettings) {
+    val context = LocalContext.current
+    Text("Split screen", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+    SwitchRow(
+        "Hold on an app to open it beside this one", s.multiWindowHold,
+        "In the switcher, keep your finger on an app until it buzzes and shows a split badge, then lift: it opens in split screen (or a pop-up window)",
+    ) { v -> edit { it.copy(multiWindowHold = v) } }
+    if (!s.multiWindowHold) return
+    ChoiceRow("Open as", com.thumbshade.app.data.MultiWindowMode.entries, s.multiWindowMode, { it.label }) { v -> edit { it.copy(multiWindowMode = v) } }
+    SliderRow("Hold for", s.multiWindowHoldMs / 1000f, 0.3f..2f, format = { "%.1f s".format(it) }) { v -> edit { it.copy(multiWindowHoldMs = (v * 1000).roundToInt()) } }
+    com.thumbshade.app.overlay.MultiWindow.problem(context)?.let { Hint(it) }
 }
